@@ -1,0 +1,17 @@
+# Dependencies (introduced starting 0.B)
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local env/secrets
+.env
+.env.*
+!.env.example
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
