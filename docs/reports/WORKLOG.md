@@ -188,3 +188,23 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** оба блокера для будущей задачи 1.B закрыты. 1.B (resumable pagination, BOQ completeness reconciliation) может начинаться с готовым query-контрактом list-ресурса, когда будет открыта отдельным заданием — сама 1.B не начата.
 
 **Блокеры:** нет.
+
+## 2026-08-04 — Дополнительная сессия: остальные два ресурса введены в конвейер (по прямому запросу владельца)
+
+**Сделано (вне очереди 1.B — не resumable pagination/BOQ completeness, только доведение механизма 1.A до всех трёх уже захваченных ресурсов):**
+- `packages/tender/etender_contract.py` — добавлен `EVENTS_LIST_PAGE_CONTRACT` (построен по `events_list_page1.raw.json`, INT-01). `identity_query_keys=("PageNumber",)` — явно зафиксировано в докстринге как временное упрощение: полноценная filter-aware идентичность (по всем параметрам фильтра из открытого вопроса выше) — предмет задачи 1.B, не подменяется здесь молча.
+- `packages/tender/etender_connector.py` — обобщён: общий `_ingest()` (raw snapshot → drift check → normalize → version) + три тонких обёртки: `ingest_event_details`, `ingest_bom_lines_page`, `ingest_events_list_page`. Нормализация BOM-страницы явно не претендует на completeness (`FR-DQ-01/02`/`P001` — 1.B), только фиксирует, что реально было на одной уже полученной странице.
+- Тесты (`tests/integration/test_etender_connector.py`): реальный ingest `event_355920_bomlines_page1.raw.json` (проверены `total_items=4135`, `total_pages=42` — как и в 1.A, но теперь через полноценный ingest, не только contract-check) и `events_list_page1.raw.json`; плюс тест на DM-01: details и BOM-страница одного и того же тендера получают РАЗНЫЕ `tender_id` (идентичность различается по `resource_type`, не только по `event_id`) — так и должно быть, это разные ресурсы одного тендера, не два конкурирующих источника истины об одном.
+- `tests/unit/test_etender_contract_fixtures.py` — добавлены 2 теста на `EVENTS_LIST_PAGE_CONTRACT` (drift-free против реального захвата; явная проверка отсутствия VÖEN/денежного поля на list-item — закрывает второй открытый пункт кодом, не только документом).
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests/ -q
+105 passed, 37 skipped in 79.84s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+110 files already formatted / All checks passed! / Success: no issues found in 35 source files / PASS: v1 untouched
+```
+
+**Дальше:** все три реально захваченных eTender-ресурса (event details, BOM-страница, events-list-страница) теперь проходят один и тот же raw→drift→normalized конвейер и покрыты тестами на реальных данных. Resumable pagination, BOQ page/row reconciliation, filter-aware identity для events-list — остаются задачей 1.B, не начаты.
+
+**Блокеры:** нет.

@@ -15,8 +15,12 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from packages.tender.etender_connector import SchemaDriftDetected, ingest_event_details
-from packages.tender.etender_contract import EVENT_DETAILS_CONTRACT
+from packages.tender.etender_connector import (
+    SchemaDriftDetected,
+    ingest_bom_lines_page,
+    ingest_event_details,
+    ingest_events_list_page,
+)
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
 
@@ -32,7 +36,6 @@ async def test_ingest_real_fixture_creates_raw_snapshot_and_normalized_version(e
     async with engine.begin() as conn:
         version = await ingest_event_details(
             conn,
-            contract=EVENT_DETAILS_CONTRACT,
             raw_body=raw_body,
             payload=payload,
             correlation_id="corr-real-1",
@@ -62,7 +65,6 @@ async def test_schema_drift_blocks_normalization_but_still_saves_raw_evidence(en
         try:
             await ingest_event_details(
                 conn,
-                contract=EVENT_DETAILS_CONTRACT,
                 raw_body=raw_body,  # raw bytes still reflect the real, undrifted capture
                 payload=drifted_payload,
                 correlation_id="corr-drift-1",
@@ -93,3 +95,62 @@ async def test_schema_drift_blocks_normalization_but_still_saves_raw_evidence(en
             (await conn.execute(text("SELECT payload FROM outbox WHERE event_type = 'schema_drift_event'"))).mappings().all()
         )
         assert len(drift_events) == 1
+
+
+async def test_ingest_real_bom_lines_page_fixture(engine):
+    raw_body = _load_bytes("event_355920_bomlines_page1.raw.json")
+    payload = json.loads(raw_body)
+
+    async with engine.begin() as conn:
+        version = await ingest_bom_lines_page(
+            conn,
+            event_id=355920,
+            raw_body=raw_body,
+            payload=payload,
+            correlation_id="corr-bom-1",
+        )
+
+    # uniwatch-v2-project.md: event 355920 -> 4 135 bomLines over 42 pages.
+    assert version.normalized_fields["total_items"] == 4135
+    assert version.normalized_fields["total_pages"] == 42
+    assert version.normalized_fields["event_id"] == 355920
+    assert len(version.normalized_fields["line_ids"]) == payload["itemsInPage"]
+
+
+async def test_ingest_real_events_list_page_fixture(engine):
+    raw_body = _load_bytes("events_list_page1.raw.json")
+    payload = json.loads(raw_body)
+
+    async with engine.begin() as conn:
+        version = await ingest_events_list_page(
+            conn,
+            raw_body=raw_body,
+            payload=payload,
+            correlation_id="corr-list-1",
+        )
+
+    assert version.normalized_fields["total_items"] == payload["totalItems"]
+    assert version.normalized_fields["event_ids_in_page"] == [item["eventId"] for item in payload["items"]]
+
+
+async def test_all_three_resources_land_as_distinct_tender_identities(engine):
+    # A BOM-lines page for event 355920 and the event's own details must not
+    # collide under the same "tenders" identity, even though both concern
+    # the same underlying tender (DM-01: one authoritative identity per
+    # (source, identity_key) -- and identity_key differs by resource_type).
+    details_body = _load_bytes("event_355920_details.raw.json")
+    bom_body = _load_bytes("event_355920_bomlines_page1.raw.json")
+
+    async with engine.begin() as conn:
+        details_version = await ingest_event_details(
+            conn, raw_body=details_body, payload=json.loads(details_body), correlation_id="corr-multi-1"
+        )
+        bom_version = await ingest_bom_lines_page(
+            conn,
+            event_id=355920,
+            raw_body=bom_body,
+            payload=json.loads(bom_body),
+            correlation_id="corr-multi-1",
+        )
+
+    assert details_version.tender_id != bom_version.tender_id

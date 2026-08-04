@@ -56,3 +56,31 @@ BOM_LINES_PAGE_CONTRACT = SourceContract(
         FieldSpec("lastItem", "number"),
     ),
 )
+
+# Captured from fixtures/tender-snapshots/etender/events_list_page1.raw.json
+# (unfiltered, default EventStatus=1, page 1 — the 2026-08-04 follow-up
+# discovery session, see docs/decisions/OPEN-QUESTIONS.md). No buyer VOEN
+# and no monetary field on list items — confirmed empirically, not a gap
+# in this contract (see MANIFEST.md).
+#
+# identity_query_keys is deliberately just PageNumber here: this task only
+# proves the ingest mechanism against the one captured (default-filter)
+# page, not full filter-aware list pagination — that job/params identity
+# model belongs to task 1.B (resumable pagination), which owns the real
+# identity_query_keys for every filter combination the worker can request.
+EVENTS_LIST_PAGE_CONTRACT = SourceContract(
+    name="etender.events_list_page",
+    identity_query_keys=("PageNumber",),
+    fields=(
+        FieldSpec("currentPage", "number"),
+        FieldSpec("totalPages", "number"),
+        FieldSpec("pageSize", "number"),
+        FieldSpec("itemsInPage", "number"),
+        FieldSpec("totalItems", "number"),
+        FieldSpec("items", "array"),
+        FieldSpec("hasPreviousPage", "boolean"),
+        FieldSpec("hasNextPage", "boolean"),
+        FieldSpec("firstItem", "number"),
+        FieldSpec("lastItem", "number"),
+    ),
+)
