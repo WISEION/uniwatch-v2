@@ -57,3 +57,22 @@ def detect_schema_drift(contract: SourceContract, actual_payload: dict) -> Schem
             type_changed.append(name)
 
     return SchemaDrift(added_fields=added, removed_fields=removed, type_changed_fields=tuple(type_changed))
+
+
+def detect_schema_drift_over_items(item_contract: SourceContract, items: list[dict]) -> SchemaDrift:
+    """Runs detect_schema_drift once per item and unions the results --
+    one drifted item among thousands of clean ones must still be reported,
+    not averaged away."""
+    added: set[str] = set()
+    removed: set[str] = set()
+    type_changed: set[str] = set()
+    for item in items:
+        item_drift = detect_schema_drift(item_contract, item)
+        added.update(item_drift.added_fields)
+        removed.update(item_drift.removed_fields)
+        type_changed.update(item_drift.type_changed_fields)
+    return SchemaDrift(
+        added_fields=tuple(sorted(added)),
+        removed_fields=tuple(sorted(removed)),
+        type_changed_fields=tuple(sorted(type_changed)),
+    )
