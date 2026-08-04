@@ -17,18 +17,22 @@ from .models import Identity
 
 async def resolve_identity(conn: AsyncConnection, username: str) -> Identity | None:
     row = (
-        await conn.execute(
-            text(
-                """
+        (
+            await conn.execute(
+                text(
+                    """
                 SELECT u.status, r.name AS role_name
                 FROM users u
                 JOIN roles r ON r.id = u.role_id
                 WHERE u.username = :username
                 """
-            ),
-            {"username": username},
+                ),
+                {"username": username},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     if row is None or row["status"] != "active":
         return None
 

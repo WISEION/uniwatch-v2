@@ -33,7 +33,7 @@ async def enqueue(
     payload: dict,
     correlation_id: str,
 ) -> int:
-    row = (
+    return (
         await conn.execute(
             text(
                 """
@@ -52,8 +52,7 @@ async def enqueue(
                 "correlation_id": correlation_id,
             },
         )
-    ).first()
-    return row[0]
+    ).scalar_one()
 
 
 DeliverCallback = Callable[[OutboxEvent], Awaitable[None]]
@@ -69,9 +68,10 @@ class Publisher:
 
     async def publish_pending(self, conn: AsyncConnection, limit: int = 100) -> list[OutboxEvent]:
         rows = (
-            await conn.execute(
-                text(
-                    """
+            (
+                await conn.execute(
+                    text(
+                        """
                     SELECT id, aggregate_type, aggregate_id, event_type, payload, correlation_id
                     FROM outbox
                     WHERE status = 'pending'
@@ -79,10 +79,13 @@ class Publisher:
                     LIMIT :limit
                     FOR UPDATE SKIP LOCKED
                     """
-                ),
-                {"limit": limit},
+                    ),
+                    {"limit": limit},
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
 
         published: list[OutboxEvent] = []
         for row in rows:

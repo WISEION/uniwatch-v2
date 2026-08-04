@@ -24,9 +24,7 @@ logger = logging.getLogger("uniwatch.worker")
 LEASE_SECONDS = 30
 
 
-async def _process_claimed_job(
-    engine: AsyncEngine, store: JobStore, job: Job, worker_id: str
-) -> None:
+async def _process_claimed_job(engine: AsyncEngine, store: JobStore, job: Job, worker_id: str) -> None:
     # Correlation id is bound per job, threading API -> worker -> outbox
     # logs (NFR-OBS-01): the job's own correlation_id column was set at
     # enqueue time from whatever created it (e.g. the API request).
@@ -41,6 +39,7 @@ async def _process_claimed_job(
         while not done:
             async with engine.begin() as conn:
                 current = await store.get(conn, job.id)
+                assert current is not None, f"job {job.id} vanished mid-processing (jobs are never deleted)"
                 checkpoint = await example_job.process_page(conn, current)
                 await store.checkpoint(conn, job.id, worker_id, checkpoint)
             done = checkpoint["done"]
@@ -48,10 +47,11 @@ async def _process_claimed_job(
         async with engine.begin() as conn:
             await store.complete(conn, job.id, worker_id)
         logger.info("completed job %s", job.id)
-    except Exception as exc:  # noqa: BLE001 - any failure here means retry/terminal-fail
+    except Exception as exc:
         logger.exception("job %s failed", job.id)
         async with engine.begin() as conn:
             current = await store.get(conn, job.id)
+            assert current is not None, f"job {job.id} vanished mid-processing (jobs are never deleted)"
             backoff = compute_backoff_seconds(current.attempt + 1)
             await store.fail_retry(conn, job.id, worker_id, error=str(exc), backoff_seconds=backoff)
 
@@ -67,9 +67,7 @@ async def run_once(engine: AsyncEngine, store: JobStore, worker_id: str) -> bool
     return True
 
 
-async def run_forever(
-    engine: AsyncEngine, worker_id: str | None = None, poll_interval: float = 1.0
-) -> None:
+async def run_forever(engine: AsyncEngine, worker_id: str | None = None, poll_interval: float = 1.0) -> None:
     worker_id = worker_id or f"worker-{uuid.uuid4()}"
     store = JobStore()
     logger.info("worker %s starting", worker_id)

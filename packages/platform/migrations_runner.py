@@ -48,8 +48,7 @@ class AppliedMigration:
 class MigrationChecksumMismatch(RuntimeError):
     def __init__(self, version: int):
         super().__init__(
-            f"migration {version} was edited after being applied "
-            "(checksum mismatch) — write a new corrective migration instead"
+            f"migration {version} was edited after being applied (checksum mismatch) — write a new corrective migration instead"
         )
         self.version = version
 
@@ -62,18 +61,14 @@ class PreflightFailed(RuntimeError):
 
 class PostflightFailed(RuntimeError):
     def __init__(self, version: int):
-        super().__init__(
-            f"migration {version} postflight failed — DDL committed but not "
-            "considered the current schema version"
-        )
+        super().__init__(f"migration {version} postflight failed — DDL committed but not considered the current schema version")
         self.version = version
 
 
 class SchemaVersionMismatch(RuntimeError):
     def __init__(self, expected: int | None, actual: int | None):
         super().__init__(
-            f"schema version mismatch: application expects {expected}, "
-            f"ledger reports {actual} — refusing to start (FR-PLT-12)"
+            f"schema version mismatch: application expects {expected}, ledger reports {actual} — refusing to start (FR-PLT-12)"
         )
         self.expected = expected
         self.actual = actual
@@ -110,8 +105,16 @@ class MigrationRunner:
             conn = await self._connect()
         try:
             await self._ensure_ledger(conn)
+            # A preflight-failed migration is recorded with postflight_status
+            # 'skipped' (same value the version-0 bootstrap row uses, which
+            # never goes through preflight/postflight at all) -- filtering on
+            # postflight_status alone would count a quarantined migration
+            # whose DDL never ran as "current", exactly the mismatch
+            # FR-PLT-12 exists to prevent. Both failure kinds must be
+            # excluded explicitly (found via the P007 regression test,
+            # tests/integration/test_invariant_quarantine.py).
             return await conn.fetchval(
-                "SELECT max(version) FROM schema_migrations WHERE postflight_status != 'failed'"
+                "SELECT max(version) FROM schema_migrations WHERE preflight_status != 'failed' AND postflight_status != 'failed'"
             )
         finally:
             if owns_conn:
@@ -122,10 +125,15 @@ class MigrationRunner:
         conn = await self._connect()
         try:
             await self._ensure_ledger(conn)
-            rows = await conn.fetch("SELECT version, checksum FROM schema_migrations")
+            rows = await conn.fetch("SELECT version, checksum, preflight_status FROM schema_migrations")
         finally:
             await conn.close()
-        applied = {row["version"]: row["checksum"] for row in rows}
+        # A preflight-failed row is a quarantined migration whose DDL never
+        # ran -- it must stay eligible for retry once whatever it flagged is
+        # fixed, not be treated as already applied just because a ledger row
+        # exists for its version (found via the P007 regression test,
+        # tests/integration/test_invariant_quarantine.py).
+        applied = {row["version"]: row["checksum"] for row in rows if row["preflight_status"] != "failed"}
 
         result = []
         for m in migrations:
@@ -147,6 +155,12 @@ class MigrationRunner:
             conn = await self._connect()
             try:
                 if preflight is not None and not await preflight(conn, m):
+                    # ON CONFLICT ... DO UPDATE, not DO NOTHING: a version can
+                    # already have a ledger row from an earlier quarantined
+                    # attempt (pending() now lets preflight-failed versions be
+                    # retried), and that stale 'failed'/'skipped' row must be
+                    # overwritten, not left behind masking this attempt's
+                    # outcome.
                     async with conn.transaction():
                         await conn.execute(
                             """
@@ -154,7 +168,13 @@ class MigrationRunner:
                                 (version, description, checksum, applied_by,
                                  preflight_status, postflight_status)
                             VALUES ($1, $2, $3, $4, 'failed', 'skipped')
-                            ON CONFLICT (version) DO NOTHING
+                            ON CONFLICT (version) DO UPDATE SET
+                                description = EXCLUDED.description,
+                                checksum = EXCLUDED.checksum,
+                                applied_at = now(),
+                                applied_by = EXCLUDED.applied_by,
+                                preflight_status = EXCLUDED.preflight_status,
+                                postflight_status = EXCLUDED.postflight_status
                             """,
                             m.version,
                             m.description,
@@ -174,7 +194,13 @@ class MigrationRunner:
                             (version, description, checksum, applied_by,
                              preflight_status, postflight_status)
                         VALUES ($1, $2, $3, $4, 'passed', $5)
-                        ON CONFLICT (version) DO NOTHING
+                        ON CONFLICT (version) DO UPDATE SET
+                            description = EXCLUDED.description,
+                            checksum = EXCLUDED.checksum,
+                            applied_at = now(),
+                            applied_by = EXCLUDED.applied_by,
+                            preflight_status = EXCLUDED.preflight_status,
+                            postflight_status = EXCLUDED.postflight_status
                         """,
                         m.version,
                         m.description,

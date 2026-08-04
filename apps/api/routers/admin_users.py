@@ -56,9 +56,7 @@ class UserListResponse(BaseModel):
 
 
 async def _load_role_id(conn: AsyncConnection, role_name: str) -> int:
-    row = (
-        await conn.execute(text("SELECT id FROM roles WHERE name = :name"), {"name": role_name})
-    ).first()
+    row = (await conn.execute(text("SELECT id FROM roles WHERE name = :name"), {"name": role_name})).first()
     if row is None:
         raise ApiError(status_code=422, code="unknown_role", message=f"unknown role: {role_name}")
     return row[0]
@@ -66,18 +64,22 @@ async def _load_role_id(conn: AsyncConnection, role_name: str) -> int:
 
 async def _load_user_row(conn: AsyncConnection, user_id: int) -> dict:
     row = (
-        await conn.execute(
-            text(
-                """
+        (
+            await conn.execute(
+                text(
+                    """
                 SELECT u.id, u.username, u.display_name, u.status, u.version, r.name AS role_name
                 FROM users u
                 JOIN roles r ON r.id = u.role_id
                 WHERE u.id = :id
                 """
-            ),
-            {"id": user_id},
+                ),
+                {"id": user_id},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .first()
+    )
     if row is None:
         raise ApiError(status_code=404, code="not_found", message=f"user {user_id} not found")
     return dict(row)
@@ -101,17 +103,21 @@ async def create_user(
 
     role_id = await _load_role_id(conn, body.role_name)
     row = (
-        await conn.execute(
-            text(
-                """
+        (
+            await conn.execute(
+                text(
+                    """
                 INSERT INTO users (username, display_name, role_id)
                 VALUES (:username, :display_name, :role_id)
                 RETURNING id, version, status
                 """
-            ),
-            {"username": body.username, "display_name": body.display_name, "role_id": role_id},
+                ),
+                {"username": body.username, "display_name": body.display_name, "role_id": role_id},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .one()
+    )
 
     response = UserResponse(
         id=row["id"],
@@ -143,9 +149,10 @@ async def list_users(
 ) -> UserListResponse:
     after_id = decode_cursor(cursor)[0] if cursor else 0
     rows = (
-        await conn.execute(
-            text(
-                """
+        (
+            await conn.execute(
+                text(
+                    """
                 SELECT u.id, u.username, u.display_name, u.status, u.version, r.name AS role_name
                 FROM users u
                 JOIN roles r ON r.id = u.role_id
@@ -153,10 +160,13 @@ async def list_users(
                 ORDER BY u.id ASC
                 LIMIT :limit_plus_one
                 """
-            ),
-            {"after_id": after_id, "limit_plus_one": limit + 1},
+                ),
+                {"after_id": after_id, "limit_plus_one": limit + 1},
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     has_more = len(rows) > limit
     page = rows[:limit]
@@ -183,19 +193,23 @@ async def update_user(
     role_id = await _load_role_id(conn, role_name)
 
     row = (
-        await conn.execute(
-            text(
-                """
+        (
+            await conn.execute(
+                text(
+                    """
                 UPDATE users
                 SET display_name = :display_name, role_id = :role_id,
                     version = version + 1, updated_at = now()
                 WHERE id = :id
                 RETURNING version, status
                 """
-            ),
-            {"display_name": display_name, "role_id": role_id, "id": user_id},
+                ),
+                {"display_name": display_name, "role_id": role_id, "id": user_id},
+            )
         )
-    ).mappings().first()
+        .mappings()
+        .one()
+    )
 
     await write_audit_log(
         conn,

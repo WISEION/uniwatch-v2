@@ -1,0 +1,86 @@
+# CI gates (task 0.D, qa): Fast (Gate 1) and Full (Gate 2) per
+# docs/reports/PLAN-MISSION-1.md §2 / master plan §22. See .ci/README.md
+# for what each gate covers and what is still a stub (security scans,
+# RC/production gates -- those are 0.D's plan for later, not this job).
+#
+# GitHub Actions is an implementation choice, not a locked decision from the
+# source docs (no PRD/master-plan section names a CI vendor) -- recorded in
+# docs/decisions/OPEN-QUESTIONS.md rather than decided silently.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  fast:
+    name: Fast gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+
+      # FR-MIG-04, NEG-01, NEG-02 -- v1 must never be touched by v2.
+      - name: v1 untouched
+        run: python tools/check_v1_untouched.py
+
+      - name: format (ruff format --check)
+        run: python -m ruff format --check .
+      - name: lint (ruff check)
+        run: python -m ruff check .
+      - name: typecheck (mypy)
+        run: python -m mypy packages apps
+
+      # Pure logic only -- no DB/network (tests/README.md).
+      - name: unit tests
+        run: python -m pytest tests/unit -q
+
+      # Contract-first sanity check (FR-PLT-01): the OpenAPI schema the app
+      # actually serves must build without error. Does not need a DB --
+      # apps/api/main.py creates the engine lazily (see its module docstring).
+      - name: API schema validates
+        run: |
+          python -c "
+          from apps.api.main import app
+          schema = app.openapi()
+          assert schema['paths'], 'OpenAPI schema has no paths'
+          print(f\"OpenAPI OK: {len(schema['paths'])} path(s)\")
+          "
+
+      # Migration syntax (FR-PLT-12): every migrations/*.sql file must at
+      # least parse (NNNN_description.sql naming, readable, hashable) --
+      # this does not apply DDL or need a DB, that is the Full gate's
+      # migration-rehearsal test (tests/integration/test_migrations_runner.py).
+      - name: migration files parse
+        run: |
+          python -c "
+          from pathlib import Path
+          from packages.platform.migrations_runner import MigrationRunner
+          migrations = MigrationRunner('', Path('migrations')).discover()
+          assert migrations, 'no migrations found'
+          print(f'{len(migrations)} migration file(s) parsed OK')
+          "
+
+  full:
+    name: Full gate
+    runs-on: ubuntu-latest
+    needs: fast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+
+      # tests/integration spins up its own Postgres via testcontainers,
+      # which talks to the runner's Docker daemon directly (available by
+      # default on GitHub-hosted runners) -- no `services:` block needed.
+      # contract/state/security/e2e/performance are empty skeletons per
+      # tests/README.md -- this collects and runs whatever exists there
+      # today and grows as Phase 1+ adds real tests to those suites.
+      - name: full suite (integration + any contract/state/security/e2e present)
+        run: python -m pytest tests/ -q

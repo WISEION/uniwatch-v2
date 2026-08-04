@@ -65,10 +65,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-        details = [
-            {"loc": [str(p) for p in e["loc"]], "msg": e["msg"], "type": e["type"]}
-            for e in exc.errors()
-        ]
+        details = [{"loc": [str(p) for p in e["loc"]], "msg": e["msg"], "type": e["type"]} for e in exc.errors()]
         return _envelope_response(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "validation_error",

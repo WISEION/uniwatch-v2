@@ -9,20 +9,12 @@ from packages.platform.rbac.store import resolve_identity
 
 
 async def _seed_role(conn, name: str) -> int:
-    row = (
-        await conn.execute(
-            text("INSERT INTO roles (name) VALUES (:name) RETURNING id"), {"name": name}
-        )
-    ).first()
+    row = (await conn.execute(text("INSERT INTO roles (name) VALUES (:name) RETURNING id"), {"name": name})).first()
     return row[0]
 
 
 async def _seed_permission(conn, name: str) -> int:
-    row = (
-        await conn.execute(
-            text("INSERT INTO permissions (name) VALUES (:name) RETURNING id"), {"name": name}
-        )
-    ).first()
+    row = (await conn.execute(text("INSERT INTO permissions (name) VALUES (:name) RETURNING id"), {"name": name})).first()
     return row[0]
 
 
@@ -94,20 +86,20 @@ async def test_disable_user_keeps_row_and_writes_audit_not_delete(engine):
         assert new_version == 2
 
     async with engine.begin() as conn:
-        row = (
-            await conn.execute(text("SELECT status, version FROM users WHERE id = :id"), {"id": user_id})
-        ).mappings().first()
+        row = (await conn.execute(text("SELECT status, version FROM users WHERE id = :id"), {"id": user_id})).mappings().first()
         assert row["status"] == "disabled"
         assert row["version"] == 2
 
         audit_row = (
-            await conn.execute(
-                text(
-                    "SELECT actor, action, object_type, object_id, reason FROM audit_log WHERE object_id = :id"
-                ),
-                {"id": str(user_id)},
+            (
+                await conn.execute(
+                    text("SELECT actor, action, object_type, object_id, reason FROM audit_log WHERE object_id = :id"),
+                    {"id": str(user_id)},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         assert audit_row["actor"] == "admin-1"
         assert audit_row["action"] == "user.disable"
         assert audit_row["object_type"] == "user"

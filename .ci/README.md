@@ -1,6 +1,8 @@
 # .ci/
 
-CI gate definitions. The actual CI runner/workflow engine is wired up in task 0.D (qa) — Fast gate (format/lint/typecheck/unit/schema/migration-syntax) and Full gate (integration/contract/state/security/e2e/migration-rehearsal/invariant-check), per `docs/reports/PLAN-MISSION-1.md` §2.
+CI gate definitions. The actual CI runner/workflow engine is wired up in task 0.D (qa): `.github/workflows/ci.yml` — Fast gate (v1-untouched, format/lint/typecheck, unit tests, OpenAPI schema build, migration-file syntax) and Full gate (the full `tests/` suite, currently unit+integration; contract/state/security/e2e/performance grow as Phase 1+ adds tests to those suites, per `tests/README.md`), per `docs/reports/PLAN-MISSION-1.md` §2. GitHub Actions is an implementation choice recorded in `docs/decisions/OPEN-QUESTIONS.md` (2026-08-04 — CI runner platform), not a locked decision from the source docs.
+
+Migration rehearsal (empty + seeded DB, idempotent repeat, FR-PLT-12), the invariant-quarantine test (FR-PLT-13, P007), and the worker-restart-resume test (FR-JOB-03) are covered by existing tests under `tests/integration/` (`test_migrations_runner.py`, `test_invariant_quarantine.py`, `test_jobs_store.py`) and run as part of the Full gate above — no separate CI step is needed for them.
 
 ## Gates defined so far (0.A)
 

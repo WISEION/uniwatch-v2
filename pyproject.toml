@@ -17,6 +17,8 @@ dev = [
   "pytest-asyncio==0.25.0",
   "httpx==0.28.1",
   "testcontainers[postgres]==4.9.0",
+  "ruff==0.16.1",
+  "mypy==2.3.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -26,6 +28,24 @@ include = ["packages*", "apps*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "RUF"]
+# B008 (function call in a default argument) is a false positive for the
+# FastAPI `Depends(...)`/`Header(...)` idiom used throughout apps/api and
+# packages/platform/rbac — that pattern is how FastAPI's DI is meant to be
+# used, not a bug bugbear should flag here.
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -61,7 +61,7 @@ def compute_backoff_seconds(attempt: int, base_seconds: int = 2, cap_seconds: in
     """Skeleton default backoff schedule (exponential, capped) — not a
     TBD-tagged SLO number, just a mechanism placeholder attempt/retry logic
     can rely on having *some* deterministic schedule."""
-    return min(cap_seconds, base_seconds**max(attempt, 1))
+    return min(cap_seconds, base_seconds ** max(attempt, 1))
 
 
 def _as_dict(value: Any) -> dict:
@@ -93,7 +93,7 @@ _JOB_COLUMNS = """id, job_type, params, source, range_start, range_end, contract
 
 class JobStore:
     async def enqueue(self, conn: AsyncConnection, identity: JobIdentity) -> int:
-        row = (
+        return (
             await conn.execute(
                 text(
                     """
@@ -115,8 +115,7 @@ class JobStore:
                     "correlation_id": identity.correlation_id,
                 },
             )
-        ).first()
-        return row[0]
+        ).scalar_one()
 
     async def claim(self, conn: AsyncConnection, worker_id: str, lease_seconds: int) -> Job | None:
         selected = (
@@ -137,9 +136,10 @@ class JobStore:
             return None
 
         row = (
-            await conn.execute(
-                text(
-                    f"""
+            (
+                await conn.execute(
+                    text(
+                        f"""
                     UPDATE jobs
                     SET status = 'leased',
                         lease_owner = :worker_id,
@@ -148,15 +148,16 @@ class JobStore:
                     WHERE id = :id
                     RETURNING {_JOB_COLUMNS}
                     """
-                ),
-                {"id": selected[0], "worker_id": worker_id, "lease_seconds": lease_seconds},
+                    ),
+                    {"id": selected[0], "worker_id": worker_id, "lease_seconds": lease_seconds},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .one()
+        )
         return _row_to_job(row)
 
-    async def heartbeat(
-        self, conn: AsyncConnection, job_id: int, worker_id: str, lease_seconds: int
-    ) -> None:
+    async def heartbeat(self, conn: AsyncConnection, job_id: int, worker_id: str, lease_seconds: int) -> None:
         result = await conn.execute(
             text(
                 """
@@ -171,9 +172,7 @@ class JobStore:
         if result.rowcount == 0:
             raise JobNotOwned(job_id, worker_id)
 
-    async def checkpoint(
-        self, conn: AsyncConnection, job_id: int, worker_id: str, checkpoint: dict
-    ) -> None:
+    async def checkpoint(self, conn: AsyncConnection, job_id: int, worker_id: str, checkpoint: dict) -> None:
         """Called only after the data the checkpoint describes has already
         been durably committed by the caller (FR-JOB-04) — the checkpoint
         itself is just "where to resume from", never the trigger that makes
@@ -206,19 +205,19 @@ class JobStore:
         if result.rowcount == 0:
             raise JobNotOwned(job_id, worker_id)
 
-    async def fail_retry(
-        self, conn: AsyncConnection, job_id: int, worker_id: str, error: str, backoff_seconds: int
-    ) -> str:
+    async def fail_retry(self, conn: AsyncConnection, job_id: int, worker_id: str, error: str, backoff_seconds: int) -> str:
         """Returns the resulting status: 'pending' (will be retried) or
         'failed' (attempts exhausted, terminal)."""
         row = (
-            await conn.execute(
-                text(
-                    "SELECT attempt, max_attempts FROM jobs WHERE id = :id AND lease_owner = :worker_id"
-                ),
-                {"id": job_id, "worker_id": worker_id},
+            (
+                await conn.execute(
+                    text("SELECT attempt, max_attempts FROM jobs WHERE id = :id AND lease_owner = :worker_id"),
+                    {"id": job_id, "worker_id": worker_id},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         if row is None:
             raise JobNotOwned(job_id, worker_id)
 
@@ -259,7 +258,5 @@ class JobStore:
         )
 
     async def get(self, conn: AsyncConnection, job_id: int) -> Job | None:
-        row = (
-            await conn.execute(text(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE id = :id"), {"id": job_id})
-        ).mappings().first()
+        row = (await conn.execute(text(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE id = :id"), {"id": job_id})).mappings().first()
         return _row_to_job(row) if row is not None else None

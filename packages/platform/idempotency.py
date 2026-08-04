@@ -30,9 +30,7 @@ class IdempotencyRecord:
 
 class IdempotencyKeyReused(Exception):
     def __init__(self, key: str, route: str):
-        super().__init__(
-            f"idempotency key {key!r} reused on {route!r} for a materially different request"
-        )
+        super().__init__(f"idempotency key {key!r} reused on {route!r} for a materially different request")
         self.key = key
         self.route = route
 
@@ -67,17 +65,21 @@ class IdempotencyStore:
             return None
 
         existing = (
-            await conn.execute(
-                text(
-                    """
+            (
+                await conn.execute(
+                    text(
+                        """
                     SELECT request_fingerprint, response_status, response_body
                     FROM idempotency_keys
                     WHERE idempotency_key = :key AND route = :route
                     """
-                ),
-                {"key": key, "route": route},
+                    ),
+                    {"key": key, "route": route},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .one()
+        )
 
         if existing["request_fingerprint"] != request_fingerprint:
             raise IdempotencyKeyReused(key, route)

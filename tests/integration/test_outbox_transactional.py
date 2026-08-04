@@ -10,9 +10,7 @@ from packages.platform.outbox import Publisher, enqueue
 
 async def test_outbox_row_committed_together_with_caller_effect(engine):
     async with engine.begin() as conn:
-        role_id = (
-            await conn.execute(text("INSERT INTO roles (name) VALUES ('r1') RETURNING id"))
-        ).scalar()
+        role_id = (await conn.execute(text("INSERT INTO roles (name) VALUES ('r1') RETURNING id"))).scalar()
         await enqueue(
             conn,
             aggregate_type="role",
@@ -24,11 +22,15 @@ async def test_outbox_row_committed_together_with_caller_effect(engine):
 
     async with engine.begin() as conn:
         row = (
-            await conn.execute(
-                text("SELECT event_type, correlation_id, status FROM outbox WHERE aggregate_id = :id"),
-                {"id": str(role_id)},
+            (
+                await conn.execute(
+                    text("SELECT event_type, correlation_id, status FROM outbox WHERE aggregate_id = :id"),
+                    {"id": str(role_id)},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
     assert row["event_type"] == "role.created"
     assert row["correlation_id"] == "corr-outbox-1"
     assert row["status"] == "pending"
@@ -51,11 +53,7 @@ async def test_rolled_back_transaction_leaves_no_outbox_row(engine):
         pass
 
     async with engine.begin() as conn:
-        row = (
-            await conn.execute(
-                text("SELECT id FROM outbox WHERE aggregate_id = :id"), {"id": str(role_id)}
-            )
-        ).first()
+        row = (await conn.execute(text("SELECT id FROM outbox WHERE aggregate_id = :id"), {"id": str(role_id)})).first()
     assert row is None
 
 
@@ -66,9 +64,7 @@ async def test_publisher_delivers_each_pending_event_once(engine):
         delivered.append(event)
 
     async with engine.begin() as conn:
-        role_id = (
-            await conn.execute(text("INSERT INTO roles (name) VALUES ('r2') RETURNING id"))
-        ).scalar()
+        role_id = (await conn.execute(text("INSERT INTO roles (name) VALUES ('r2') RETURNING id"))).scalar()
         await enqueue(
             conn,
             aggregate_type="role",
@@ -93,9 +89,7 @@ async def test_publisher_rerun_is_idempotent_no_op_for_already_published(engine)
         delivered.append(event)
 
     async with engine.begin() as conn:
-        role_id = (
-            await conn.execute(text("INSERT INTO roles (name) VALUES ('r3') RETURNING id"))
-        ).scalar()
+        role_id = (await conn.execute(text("INSERT INTO roles (name) VALUES ('r3') RETURNING id"))).scalar()
         await enqueue(
             conn,
             aggregate_type="role",

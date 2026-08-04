@@ -85,9 +85,7 @@ def scan_for_literals() -> list[str]:
                 continue
             for literal in FORBIDDEN_LITERALS:
                 if literal in text:
-                    violations.append(
-                        f"{path.relative_to(REPO_ROOT)}: contains forbidden v1 path literal '{literal}'"
-                    )
+                    violations.append(f"{path.relative_to(REPO_ROOT)}: contains forbidden v1 path literal '{literal}'")
     return violations
 
 
@@ -143,9 +141,7 @@ def check_baseline(init: bool) -> list[str]:
         recorded = baseline[key]
         added = set(current) - set(recorded)
         removed = set(recorded) - set(current)
-        modified = {
-            f for f in (set(current) & set(recorded)) if current[f] != recorded[f]
-        }
+        modified = {f for f in (set(current) & set(recorded)) if current[f] != recorded[f]}
 
         if added:
             problems.append(f"{v1_path}: new file(s) since baseline: {sorted(added)}")

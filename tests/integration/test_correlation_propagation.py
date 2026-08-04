@@ -38,14 +38,15 @@ async def test_worker_processes_multi_page_job_and_propagates_correlation_id(eng
     async with engine.begin() as conn:
         job = await store.get(conn, job_id)
         outbox_rows = (
-            await conn.execute(
-                text(
-                    "SELECT event_type, correlation_id, payload FROM outbox "
-                    "WHERE aggregate_id = :id ORDER BY id"
-                ),
-                {"id": str(job_id)},
+            (
+                await conn.execute(
+                    text("SELECT event_type, correlation_id, payload FROM outbox WHERE aggregate_id = :id ORDER BY id"),
+                    {"id": str(job_id)},
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
 
     assert job.status == "completed"
     assert len(outbox_rows) == 3

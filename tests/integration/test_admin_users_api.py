@@ -6,7 +6,6 @@ separation (FR-PLT-02)."""
 from __future__ import annotations
 
 import httpx
-import pytest
 import pytest_asyncio
 from sqlalchemy import text
 
@@ -39,9 +38,7 @@ async def client(app):
 @pytest_asyncio.fixture
 async def admin_user(engine):
     async with engine.begin() as conn:
-        role_id = (
-            await conn.execute(text("INSERT INTO roles (name) VALUES ('admin') RETURNING id"))
-        ).scalar()
+        role_id = (await conn.execute(text("INSERT INTO roles (name) VALUES ('admin') RETURNING id"))).scalar()
         for perm in ADMIN_PERMISSIONS:
             perm_id = (
                 await conn.execute(
@@ -54,9 +51,7 @@ async def admin_user(engine):
                 {"r": role_id, "p": perm_id},
             )
         await conn.execute(
-            text(
-                "INSERT INTO users (username, display_name, role_id) VALUES ('admin-1', 'Admin One', :r)"
-            ),
+            text("INSERT INTO users (username, display_name, role_id) VALUES ('admin-1', 'Admin One', :r)"),
             {"r": role_id},
         )
     return "admin-1"
@@ -65,9 +60,7 @@ async def admin_user(engine):
 @pytest_asyncio.fixture
 async def viewer_role(engine):
     async with engine.begin() as conn:
-        role_id = (
-            await conn.execute(text("INSERT INTO roles (name) VALUES ('member') RETURNING id"))
-        ).scalar()
+        role_id = (await conn.execute(text("INSERT INTO roles (name) VALUES ('member') RETURNING id"))).scalar()
     return role_id
 
 
@@ -80,9 +73,7 @@ async def test_get_without_dev_user_header_is_401(client, admin_user):
 async def test_authenticated_user_without_permission_is_403(client, viewer_role, engine):
     async with engine.begin() as conn:
         await conn.execute(
-            text(
-                "INSERT INTO users (username, display_name, role_id) VALUES ('viewer-1', 'Viewer', :r)"
-            ),
+            text("INSERT INTO users (username, display_name, role_id) VALUES ('viewer-1', 'Viewer', :r)"),
             {"r": viewer_role},
         )
     response = await client.get("/admin/users", headers={"X-Dev-User": "viewer-1"})
@@ -110,9 +101,7 @@ async def test_create_user_replay_does_not_duplicate(client, admin_user, viewer_
     assert first.json() == second.json()
 
     async with engine.begin() as conn:
-        count = (
-            await conn.execute(text("SELECT count(*) FROM users WHERE username = 'new-2'"))
-        ).scalar()
+        count = (await conn.execute(text("SELECT count(*) FROM users WHERE username = 'new-2'"))).scalar()
     assert count == 1
 
 
@@ -137,9 +126,7 @@ async def test_list_users_paginates_by_cursor_not_offset(client, admin_user, vie
     async with engine.begin() as conn:
         for i in range(5):
             await conn.execute(
-                text(
-                    "INSERT INTO users (username, display_name, role_id) VALUES (:u, :u, :r)"
-                ),
+                text("INSERT INTO users (username, display_name, role_id) VALUES (:u, :u, :r)"),
                 {"u": f"bulk-{i}", "r": viewer_role},
             )
 
@@ -151,9 +138,7 @@ async def test_list_users_paginates_by_cursor_not_offset(client, admin_user, vie
     assert body["next_cursor"] is not None
     assert "offset" not in first_page.url.params
 
-    second_page = await client.get(
-        f"/admin/users?limit=2&cursor={body['next_cursor']}", headers=headers
-    )
+    second_page = await client.get(f"/admin/users?limit=2&cursor={body['next_cursor']}", headers=headers)
     second_body = second_page.json()
     assert len(second_body["items"]) == 2
     first_ids = {item["id"] for item in body["items"]}
@@ -178,9 +163,7 @@ async def test_update_without_if_match_is_422(client, admin_user, viewer_role, e
     async with engine.begin() as conn:
         user_id = (
             await conn.execute(
-                text(
-                    "INSERT INTO users (username, display_name, role_id) VALUES ('u-upd', 'U', :r) RETURNING id"
-                ),
+                text("INSERT INTO users (username, display_name, role_id) VALUES ('u-upd', 'U', :r) RETURNING id"),
                 {"r": viewer_role},
             )
         ).scalar()
@@ -196,9 +179,7 @@ async def test_update_with_stale_if_match_is_409_with_current_version(client, ad
     async with engine.begin() as conn:
         user_id = (
             await conn.execute(
-                text(
-                    "INSERT INTO users (username, display_name, role_id) VALUES ('u-upd2', 'U', :r) RETURNING id"
-                ),
+                text("INSERT INTO users (username, display_name, role_id) VALUES ('u-upd2', 'U', :r) RETURNING id"),
                 {"r": viewer_role},
             )
         ).scalar()
@@ -215,9 +196,7 @@ async def test_update_with_correct_if_match_succeeds_and_bumps_version(client, a
     async with engine.begin() as conn:
         user_id = (
             await conn.execute(
-                text(
-                    "INSERT INTO users (username, display_name, role_id) VALUES ('u-upd3', 'U', :r) RETURNING id"
-                ),
+                text("INSERT INTO users (username, display_name, role_id) VALUES ('u-upd3', 'U', :r) RETURNING id"),
                 {"r": viewer_role},
             )
         ).scalar()
@@ -236,9 +215,7 @@ async def test_disable_keeps_row_and_is_not_deletable(client, admin_user, viewer
     async with engine.begin() as conn:
         user_id = (
             await conn.execute(
-                text(
-                    "INSERT INTO users (username, display_name, role_id) VALUES ('u-dis', 'U', :r) RETURNING id"
-                ),
+                text("INSERT INTO users (username, display_name, role_id) VALUES ('u-dis', 'U', :r) RETURNING id"),
                 {"r": viewer_role},
             )
         ).scalar()
@@ -251,15 +228,17 @@ async def test_disable_keeps_row_and_is_not_deletable(client, admin_user, viewer
     assert response.json()["status"] == "disabled"
 
     async with engine.begin() as conn:
-        row = (
-            await conn.execute(text("SELECT status FROM users WHERE id = :id"), {"id": user_id})
-        ).mappings().first()
+        row = (await conn.execute(text("SELECT status FROM users WHERE id = :id"), {"id": user_id})).mappings().first()
         audit = (
-            await conn.execute(
-                text("SELECT action, reason FROM audit_log WHERE object_id = :id AND action = 'user.disable'"),
-                {"id": str(user_id)},
+            (
+                await conn.execute(
+                    text("SELECT action, reason FROM audit_log WHERE object_id = :id AND action = 'user.disable'"),
+                    {"id": str(user_id)},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
     assert row is not None  # row still exists — no DELETE was issued
     assert row["status"] == "disabled"
     assert audit["reason"] == "left the company"
@@ -269,9 +248,7 @@ async def test_disabled_user_cannot_authenticate(client, admin_user, viewer_role
     async with engine.begin() as conn:
         user_id = (
             await conn.execute(
-                text(
-                    "INSERT INTO users (username, display_name, role_id) VALUES ('u-dis2', 'U', :r) RETURNING id"
-                ),
+                text("INSERT INTO users (username, display_name, role_id) VALUES ('u-dis2', 'U', :r) RETURNING id"),
                 {"r": viewer_role},
             )
         ).scalar()

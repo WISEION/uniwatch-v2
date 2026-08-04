@@ -39,11 +39,9 @@ async def readiness(request: Request) -> ReadinessResponse:
     try:
         current = await runner.current_version()
     except Exception as exc:
-        raise ApiError(
-            status_code=503, code="not_ready", message=f"database unreachable: {exc}"
-        ) from exc
+        raise ApiError(status_code=503, code="not_ready", message=f"database unreachable: {exc}") from exc
 
-    if current != settings.expected_schema_version:
+    if current is None or current != settings.expected_schema_version:
         raise ApiError(
             status_code=503,
             code="not_ready",

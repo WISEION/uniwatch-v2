@@ -48,9 +48,7 @@ async def write_audit_log(
 async def disable_user(conn: AsyncConnection, *, user_id: int, actor: str, reason: str) -> int:
     """Returns the user's new version. No DELETE is ever issued — the row
     and its full audit history stay queryable (INV-08)."""
-    row = (
-        await conn.execute(text("SELECT version FROM users WHERE id = :id"), {"id": user_id})
-    ).mappings().first()
+    row = (await conn.execute(text("SELECT version FROM users WHERE id = :id"), {"id": user_id})).mappings().first()
     if row is None:
         raise UserNotFound(user_id)
 

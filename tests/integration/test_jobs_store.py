@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import text
 
 from packages.platform.jobs import JobIdentity, JobNotOwned, JobStore
 
-import pytest
-
 
 def _identity(**overrides) -> JobIdentity:
-    base = dict(
-        job_type="etender_page_fetch",
-        params={"filter": "open"},
-        source="etender",
-        range_start="2026-01-01",
-        range_end="2026-01-31",
-        contract_version="v1",
-        correlation_id="corr-jobs-1",
-    )
+    base = {
+        "job_type": "etender_page_fetch",
+        "params": {"filter": "open"},
+        "source": "etender",
+        "range_start": "2026-01-01",
+        "range_end": "2026-01-31",
+        "contract_version": "v1",
+        "correlation_id": "corr-jobs-1",
+    }
     base.update(overrides)
     return JobIdentity(**base)
 

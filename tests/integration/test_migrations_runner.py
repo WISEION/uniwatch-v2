@@ -83,12 +83,8 @@ async def test_preflight_failure_blocks_ddl_and_is_recorded(asyncpg_dsn):
 
     conn = await asyncpg.connect(asyncpg_dsn)
     try:
-        exists = await conn.fetchval(
-            "SELECT to_regclass('public.users') IS NOT NULL"
-        )
-        row = await conn.fetchrow(
-            "SELECT preflight_status, postflight_status FROM schema_migrations WHERE version = 1"
-        )
+        exists = await conn.fetchval("SELECT to_regclass('public.users') IS NOT NULL")
+        row = await conn.fetchrow("SELECT preflight_status, postflight_status FROM schema_migrations WHERE version = 1")
     finally:
         await conn.close()
     assert exists is False
