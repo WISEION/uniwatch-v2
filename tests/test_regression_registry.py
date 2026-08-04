@@ -28,23 +28,32 @@ import pytest
 
 
 def test_P001_boq_page_completeness():
-    """v1: BOQ loaded only page 1; 1,644/6,288 rows lost silently.
-    Control: page/row completeness proof, `completeness_status` only
-    `complete` after proven reconciliation (FR-DQ-01, FR-DQ-02, FR-TND-04,
-    INV-04). Mandatory from Phase 1 (eTender connector/BOQ reconciliation
-    does not exist yet in this repo)."""
-    pytest.skip("mandatory from Phase 1 (PLAN-MISSION-1.md §3 1.E) -- BOQ/connector not built yet")
+    """v1: BOQ loaded only page 1; 1,644/6,288 rows lost silently. Control:
+    page/row completeness proof, status only `complete` after proven
+    reconciliation, `source_exhausted_unverified` if the source never
+    reported a total, `incomplete` with exact missing pages if fetching
+    stalls (FR-DQ-01, FR-DQ-02, FR-TND-04, INV-04). CLOSED in task 1.B --
+    see `packages/tender/boq_completeness.py`,
+    `tests/integration/test_boq_completeness.py` (accumulation over 3 real
+    pages, `complete`/`source_exhausted_unverified`/`incomplete` states) and
+    `tests/integration/test_bom_lines_pagination.py`
+    (`test_resumable_pagination_processes_real_pages_in_order`, real
+    reconciliation counters against the real 42-page/4135-line BOQ)."""
+    # Not a stub: real regression tests live in the files named above.
 
 
 def test_P002_cursor_resume_after_page_error():
     """v1: cursor skipped ahead after an error and could be reused across a
     different range. Control: atomic checkpoint + full job identity fixed at
     enqueue (FR-JOB-02, FR-JOB-04..06, INV-03). The generic mechanism is
-    already covered by `tests/integration/test_jobs_store.py` (checkpoint
-    survives a simulated crash, a new range gets a new job); the specific
-    eTender-connector acceptance proof ("page 2 fails -> resume page 2, not
-    3") is mandatory from Phase 1 (PLAN-MISSION-1.md §3 1.E)."""
-    pytest.skip("mandatory from Phase 1 (PLAN-MISSION-1.md §3 1.E) -- connector-level proof not built yet")
+    covered by `tests/integration/test_jobs_store.py`; the eTender-connector
+    acceptance proof is CLOSED in task 1.B -- see
+    `tests/integration/test_bom_lines_pagination.py`
+    (`test_page_fetch_failure_resumes_same_page_not_next`: page 2 fails,
+    checkpoint stays at 2, retry succeeds on the real page-2 content, page 3
+    fetched next -- no skip, no duplicate; `test_new_job_identity_starts_at_page_1_independently`:
+    a new job identity never inherits another job's cursor, FR-JOB-06)."""
+    # Not a stub: real regression tests live in the file named above.
 
 
 def test_P003_rejected_link_not_restored_by_ingestion():
@@ -76,11 +85,15 @@ def test_P005_final_bid_checks_active_no_go():
 def test_P006_ssrf_via_redirect_or_document_link():
     """v1: SSRF via an RSS-link redirect. Control: central egress validator +
     trusted source registry, checked before DNS resolution and after every
-    redirect (NFR-SEC-01..03, INV-10). Design/contract fixed in 0.C
-    (`docs/architecture/egress-validator-contract.md`); implementation and
-    the SSRF regression suite (IPv4/IPv6/redirect/rebind) are mandatory from
-    Phase 1 (`docs/reports/PLAN-MISSION-1.md` §3 1.C/1.E)."""
-    pytest.skip("mandatory from Phase 1 (PLAN-MISSION-1.md §3 1.C/1.E) -- egress validator not implemented yet")
+    redirect (NFR-SEC-01..03, INV-10). CLOSED in task 1.C -- see
+    `packages/platform/egress/` (registry, validator, pinned-connect fetch)
+    and `tests/security/test_ssrf_suite.py`: metadata/private addresses
+    blocked (loopback/RFC1918/link-local/CGNAT/NAT64, IPv4+IPv6), a 3-hop
+    redirect chain to a private target rejected at the redirect step
+    (never reaching the private host), DNS-rebind pinning proven, and a
+    real live fetch against `etender.gov.az` succeeding end to end through
+    the same validator (no false-positive block)."""
+    # Not a stub: real regression tests live in the files named above.
 
 
 def test_P007_orphaned_fk_rows_block_migration():
@@ -368,8 +381,14 @@ def test_RN05_every_tender_belongs_to_a_client():
 def test_RN06_url_canonicalization_preserves_identity_query_keys():
     """v1 0.19.0: URL canonicalization dropped the whole query string,
     silently merging distinct articles differing only by `?newsID=N`.
-    Control: `identity_query_keys` in the source contract (INT-02)."""
-    pytest.skip("no phase assigned yet in any PLAN-MISSION document")
+    Control: `identity_query_keys` in the source contract (INT-02).
+    Explicitly assigned to Phase 1 task 1.A in `PLAN-MISSION-1.md` §2
+    ("identity_query_keys в контракте источника ... урок RN-06"). CLOSED --
+    see `packages/tender/source_contract.py` (`canonical_identity`) and
+    `tests/unit/test_source_contract.py`
+    (`test_canonical_identity_distinguishes_records_a_naive_canonicalizer_would_merge`,
+    `test_canonical_identity_uses_all_identity_query_keys_for_paged_resources`)."""
+    # Not a stub: real regression tests live in the file named above.
 
 
 def test_RN07_removed_source_reconciled_with_db_not_left_enabled_forever():

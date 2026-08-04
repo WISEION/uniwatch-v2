@@ -279,3 +279,32 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** задача 1.D закрыта — P305/P306/P307 зелёные. Из механизма 1.D пока НЕ вписана обработка `EgressRejected` (1.C) и просроченных фактов (`INV-17`, TTL) в очередь конкретной интеграцией — сам механизм очереди generic и готов принять оба типа, конкретная проводка сделана только для schema drift (единственный тип, для которого у нас уже есть реальный сценарий на реальных данных). Осталась 1.E (qa gate) — последняя задача Phase 1, закрывает ворота фазы.
 
 **Блокеры:** нет новых.
+
+## 2026-08-05 — Задание №008: Phase 1, задача 1.E (qa gate) — Exit gate Phase 1
+
+**Сделано:**
+- `tests/test_regression_registry.py`: **P001** (BOQ completeness), **P002** (cursor resume после сбоя страницы), **P006** (SSRF) переведены из `pytest.skip` в реальные указатели на тесты, которые их закрывают (1.B/1.B/1.C соответственно). **RN-06** (`identity_query_keys`) тоже закрыт — `PLAN-MISSION-1.md` §2 явно назначал его задаче 1.A, регистр 0.D это упустил (написан до того, как 1.A сформулировал явную ссылку). P003/P004/P005 не тронуты — по-прежнему Phase 2/4 согласно [правке №1]. Итог: 9 из 42 регрессий закрыты реальными тестами (было 5 после 0.D), 33 честно помечены как относящиеся к более поздним фазам.
+- `tests/integration/test_traceability.py` — FR-TND-02 acceptance «из UI открывается raw evidence для любой версии»: для всех трёх реальных ресурсов (`event_details`, `bom_lines_page`, `events_list_page`) normalized-версия открывает raw snapshot по `raw_snapshot_id`, checksum совпадает с sha256 реальных байт, тело совпадает byte-for-byte с источником. Плюс тест, что вторая версия того же тендера ссылается на свой собственный, отдельный raw snapshot (ни один не перезаписан).
+
+**Exit gate Phase 1 (`docs/reports/PLAN-MISSION-1.md` §3) — доказательства:**
+
+| Критерий | Доказательство |
+|---|---|
+| Page failure возобновляется корректно | `tests/integration/test_bom_lines_pagination.py::test_page_fetch_failure_resumes_same_page_not_next` — сбой на реальной странице 2, checkpoint не продвигается, ретрай успешен на реальном содержимом, страница 3 запрошена следующей |
+| Schema drift детектируется | `tests/unit/test_schema_drift.py`, `tests/integration/test_etender_connector.py::test_schema_drift_blocks_normalization_but_still_saves_raw_evidence`, `tests/integration/test_bom_lines_job_exception_handling.py` (P305 — не роняет job) |
+| Нет SSRF-маршрутов | `tests/security/test_ssrf_suite.py` — P301-P304, включая реальный сетевой запрос к `etender.gov.az` через полный validate+pinned-connect |
+| Каждый tender прослеживается до source snapshot | `tests/integration/test_traceability.py` — все 3 реальных ресурса, checksum и тело совпадают с источником |
+| Cursor двигается только после атомарного commit | `tests/integration/test_bom_lines_pagination.py` (INV-03, тот же тест, что и P002) + `tests/integration/test_jobs_store.py` (0.B, generic-механизм) |
+| Exception queue работает и видна | `tests/integration/test_exception_queue.py` (P306/P307) + `tests/integration/test_bom_lines_job_exception_handling.py` (P305, реальная проводка) |
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests/ -q
+168 passed, 33 skipped in 73.78s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+133 files already formatted / All checks passed! / Success: no issues found in 42 source files / PASS: v1 untouched
+```
+
+**Дальше:** задача 1.E закрыта — все критерии Exit gate Phase 1 имеют доказательства. Phase 1 (Tender ingestion core) технически завершена: 1.A/1.B/1.C/1.D/1.E сделаны. Ожидание вердикта супервайзера по Exit gate Phase 1 перед стартом Phase 2 (`AGENTS.md` §4). Открытые пункты, не блокирующие этот gate, но требующие внимания до/во время Phase 2: АЛГОРИТМ-страница vs Decision Core (`docs/decisions/OPEN-QUESTIONS.md`, 2026-08-04), `D-SRC` (полный объём истории/retention), events-list resumable pagination (контракт есть, полная реализация с фильтрами — при необходимости в Phase 2).
+
+**Блокеры:** нет новых.
