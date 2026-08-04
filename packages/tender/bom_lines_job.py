@@ -38,6 +38,8 @@ from packages.platform.exception_queue import enqueue_exception
 from packages.platform.jobs import Job
 
 from .boq_completeness import record_page_fetched
+from .boq_line_model import build_boq_lines
+from .boq_lines_store import store_boq_lines
 from .etender_connector import SchemaDriftDetected, ingest_bom_lines_page
 from .raw_snapshot import checksum_of
 
@@ -79,6 +81,7 @@ async def process_bom_lines_page(conn: AsyncConnection, job: Job, fetch_page: Fe
             "tender_version_id": None,
             "boq_status": None,
             "exception_queue_id": exception_record.id,
+            "boq_lines_stored": 0,
         }
 
     boq_status = await record_page_fetched(
@@ -92,6 +95,16 @@ async def process_bom_lines_page(conn: AsyncConnection, job: Job, fetch_page: Fe
         page_checksum=checksum_of(raw_body),
     )
 
+    lines = build_boq_lines(page_number=next_page, items=payload["items"])
+    boq_lines_stored = await store_boq_lines(
+        conn,
+        source="etender",
+        event_id=event_id,
+        tender_version_id=version.id,
+        raw_snapshot_id=version.raw_snapshot_id,
+        lines=lines,
+    )
+
     total_pages = payload.get("totalPages")
     done = total_pages is not None and next_page >= total_pages
 
@@ -100,4 +113,5 @@ async def process_bom_lines_page(conn: AsyncConnection, job: Job, fetch_page: Fe
         "done": done,
         "tender_version_id": version.id,
         "boq_status": boq_status.status,
+        "boq_lines_stored": boq_lines_stored,
     }

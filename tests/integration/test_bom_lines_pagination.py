@@ -156,3 +156,71 @@ async def test_new_job_identity_starts_at_page_1_independently(engine):
     assert job_a != job_b
     assert job_b_row.checkpoint == {}
     assert job_b_row.checkpoint.get("next_page", 1) == 1
+
+
+async def test_boq_lines_are_stored_for_every_real_page_processed(engine):
+    store = JobStore()
+    worker_id = "w1"
+    async with engine.begin() as conn:
+        job_id = await store.enqueue(conn, _identity(correlation_id="corr-boq-lines-1"))
+        await store.claim(conn, worker_id=worker_id, lease_seconds=LEASE_SECONDS)
+
+    for _ in range(3):
+        async with engine.begin() as conn:
+            job = await store.get(conn, job_id)
+            checkpoint = await process_bom_lines_page(conn, job, _load_page)
+            assert checkpoint["boq_lines_stored"] == 100
+            await store.checkpoint(conn, job_id, worker_id, checkpoint)
+
+    async with engine.begin() as conn:
+        total_lines = (
+            (await conn.execute(text("SELECT count(*) AS n FROM boq_lines WHERE event_id = 355920"))).mappings().one()["n"]
+        )
+        every_line_has_unit_and_qty = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT count(*) AS n FROM boq_lines "
+                        "WHERE event_id = 355920 AND (unit_raw IS NULL OR unit_raw = '' OR qty IS NULL)"
+                    )
+                )
+            )
+            .mappings()
+            .one()["n"]
+        )
+    # P308 (real-data half): every real line across all 3 pages decomposed,
+    # each with a non-null unit + qty.
+    assert total_lines == 300
+    assert every_line_has_unit_and_qty == 0
+
+
+async def test_item_level_drift_skips_boq_lines_for_that_page_same_as_page_level_drift(engine):
+    store = JobStore()
+    worker_id = "w1"
+    async with engine.begin() as conn:
+        job_id = await store.enqueue(conn, _identity(correlation_id="corr-boq-lines-drift"))
+        await store.claim(conn, worker_id=worker_id, lease_seconds=LEASE_SECONDS)
+
+    async def drifted_fetch_page(event_id: int, page_number: int) -> tuple[bytes, dict]:
+        raw_body, payload = await _load_page(event_id, page_number)
+        drifted = {
+            **payload,
+            "items": [{**payload["items"][0], "quantity": str(payload["items"][0]["quantity"])}, *payload["items"][1:]],
+        }
+        return raw_body, drifted
+
+    async with engine.begin() as conn:
+        job = await store.get(conn, job_id)
+        checkpoint = await process_bom_lines_page(conn, job, drifted_fetch_page)
+        await store.checkpoint(conn, job_id, worker_id, checkpoint)
+
+    assert checkpoint["boq_status"] is None  # same P305 skip-path as page-level drift
+    assert checkpoint["next_page"] == 2  # pagination still advances, one drifted page doesn't stall the job
+
+    async with engine.begin() as conn:
+        lines_for_this_page = (
+            (await conn.execute(text("SELECT count(*) AS n FROM boq_lines WHERE event_id = 355920 AND page_number = 1")))
+            .mappings()
+            .one()["n"]
+        )
+    assert lines_for_this_page == 0  # a page that failed drift-checking stores no guessed lines
