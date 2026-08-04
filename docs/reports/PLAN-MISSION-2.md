@@ -1,6 +1,6 @@
 # PLAN-MISSION-2 — Phase 2: Real Tender experience, documents and BOQ
 
-**Статус:** ЧЕРНОВИК. Не активируется до вердикта GO супервайзера по Exit gate Phase 1 (PLAN-MISSION-1.md). Готовится заранее, чтобы не терять время между закрытием Миссии 1 и стартом Миссии 2 — планирование не нарушает правило «одна фаза за раз», только исполнение ждёт ворот.
+**Статус:** ЧЕРНОВИК, **вероятно вытеснен** `TENDER_INTELLIGENCE_SPEC.md` §5 (Phase 2 — BOQ depth + Forecast layer), см. `docs/decisions/OPEN-QUESTIONS.md` (2026-08-05) — тот документ описывает другое наполнение Phase 2 (BOQ-глубина/signal ingestion/forecast engine, без фронтенда/projects/tender↔project-решений/employee dashboard). Frontend/`apps/web`/P003/P004/employee dashboard из этого файла **пока не имеют подтверждённой фазы** — открытый вопрос владельцу, не решено. Файл не удалён. GO по Exit gate Phase 1 получен (2026-08-05) — Phase 2 стартует по `TENDER_INTELLIGENCE_SPEC.md` §5, не по этому файлу, пока владелец не решит иначе.
 **Дата:** 2026-08-04
 **Приоритет источников при конфликте:** PRD v1.1 (`0_UNIWatch-v2-PRD-v1.0.md`) > master plan 2026-07-28 §17.2/§18 > v1 audit / release notes.
 **Зависимость:** требует принятого Exit gate Phase 0 И Exit gate Phase 1 (P001/P002/P006/P007 зелёные, cursor/exception queue/SSRF доказаны).

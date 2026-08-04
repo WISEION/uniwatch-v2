@@ -126,3 +126,36 @@ remaining tasks (1.C/1.D/1.E).
 
 **Owner follow-up needed:** No further action needed to continue 1.C. The АЛГОРИТМ-builder question
 above should be raised before Phase 5 planning starts.
+
+## 2026-08-05 — PLAN-MISSION-2.md vs TENDER_INTELLIGENCE_SPEC.md §5: two different "Phase 2"s
+
+**Context:** Starting Phase 2 after the owner's GO on the Phase 1 Exit gate. Checking `TENDER_INTELLIGENCE_SPEC.md`
+against every existing PLAN-MISSION draft (done for 3/4/5 on 2026-08-04) surfaced a gap: `PLAN-MISSION-2.md`
+was not compared against the new document at integration time, and it turns out to describe substantially
+different content for the same phase number.
+
+**Deviation/assumption:** `PLAN-MISSION-2.md` (drafted before the new spec) scopes Phase 2 as: `apps/web`
+frontend, Tenders/Projects/Signals UI, tender<->project human link decisions (`P003`/`P004`), full BOQ
+pagination, deep links, employee dashboard, browser E2E/WCAG. `TENDER_INTELLIGENCE_SPEC.md` §5 scopes its
+own Phase 2 as: BOQ line depth (2.A), signal ingestion (2.B), a forecast engine (2.C), a forecast card +
+delivery (2.D) -- no frontend, no `apps/web`, no tender<->project linking, no employee dashboard at all.
+
+**Resolution (per owner, "go on" after the discrepancy was flagged -- same precedent as the 2026-08-04
+Phase 3/4/5 supersession):** `TENDER_INTELLIGENCE_SPEC.md` §5 is the plan of record for Phase 2 content
+going forward; `PLAN-MISSION-2.md` is marked likely-superseded, same treatment as 3/4/5, not deleted.
+
+**Consequence that must not be silently dropped:** `docs/CONTEXT.md`'s "Mission 1 scope" section and
+`PLAN-MISSION-1.md` §5 both state "`P003`/`P004` (tender<->project link decisions) land with Phase 2
+linking" -- that assumption no longer holds under the new Phase 2 scope, which does not mention tender<->project
+linking at all. **P003/P004 currently have no assigned phase** in any document that is still the plan
+of record. Same open status for the frontend/`apps/web`/employee-dashboard/deep-links content
+(`FR-PLT-08`, `FR-TND-11/12`, `P223`, `P226`) that `PLAN-MISSION-2.md` owned -- not covered by the new
+document's Phase 2, 3, or 4 either, on a first read.
+
+**Owner follow-up needed:** Yes. Before P003/P004's regression-registry entries can be reassigned to a
+real phase (they currently still say "mandatory from Phase 2 (PLAN-MISSION-1.md §5 [правка №1];
+PLAN-MISSION-2.md draft)", which is now stale), and before frontend work is skipped or deferred, the
+owner should confirm whether: (a) frontend/linking/dashboard content lands in a later phase not yet
+drafted, (b) it merges into one of the new document's existing phases, or (c) `PLAN-MISSION-2.md`'s
+content stands alongside the new Phase 2 rather than being superseded by it. Not blocking to start
+2.A (BOQ line depth) now, which both documents' Phase 2 agree on.

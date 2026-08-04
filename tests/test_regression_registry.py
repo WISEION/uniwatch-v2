@@ -60,17 +60,22 @@ def test_P003_rejected_link_not_restored_by_ingestion():
     """v1: a rejected human tender<->project link was silently restored by a
     later ingestion run. Control: append-only candidate vs. human decision
     (FR-TND-08/09, DM-04, INV-01). Domain invariant only in Phase 0/1 (no
-    Bid/No-Bid-adjacent linking domain exists yet); full closure is Phase 2
-    (`docs/reports/PLAN-MISSION-1.md` §5 [правка №1]; `PLAN-MISSION-2.md`,
-    draft)."""
-    pytest.skip("mandatory from Phase 2 (PLAN-MISSION-1.md §5 [правка №1]; PLAN-MISSION-2.md draft)")
+    Bid/No-Bid-adjacent linking domain exists yet). `PLAN-MISSION-1.md` §5
+    [правка №1] originally assigned full closure to Phase 2, but
+    `PLAN-MISSION-2.md` (which owned tender<->project linking) is now
+    likely-superseded by `TENDER_INTELLIGENCE_SPEC.md` §5's own Phase 2
+    content (BOQ depth + forecast layer), which does not mention linking at
+    all -- **no confirmed phase as of 2026-08-05**, see
+    `docs/decisions/OPEN-QUESTIONS.md` (2026-08-05 entry) for the open
+    question to the owner. Not guessed here."""
+    pytest.skip("no confirmed phase as of 2026-08-05 -- see docs/decisions/OPEN-QUESTIONS.md (2026-08-05 entry)")
 
 
 def test_P004_confirmed_link_not_replaced_by_stronger_automatch():
     """v1: a confirmed link was silently replaced by a stronger auto-match.
     Control: ingestion cannot change an accepted link (FR-TND-09, INV-01).
-    Same domain/phase as P003."""
-    pytest.skip("mandatory from Phase 2 (PLAN-MISSION-1.md §5 [правка №1]; PLAN-MISSION-2.md draft)")
+    Same domain/open-phase-question as P003 above."""
+    pytest.skip("no confirmed phase as of 2026-08-05 -- see docs/decisions/OPEN-QUESTIONS.md (2026-08-05 entry)")
 
 
 def test_P005_final_bid_checks_active_no_go():
@@ -117,15 +122,25 @@ def test_P007_orphaned_fk_rows_block_migration():
 def test_P108_details_boq_changes_visible_to_history():
     """v1: details/BOQ changes were invisible to history and notifications.
     Control: separate immutable resource versions + diff (FR-TND-05, DM-02).
-    Mandatory from Phase 2 (`PLAN-MISSION-2.md` draft, §exit gate)."""
-    pytest.skip("mandatory from Phase 2 (PLAN-MISSION-2.md draft) -- tender detail/versioning screens not built yet")
+    `PLAN-MISSION-2.md` (likely-superseded, see `docs/decisions/OPEN-QUESTIONS.md`
+    2026-08-05) assigned this to Phase 2; `TENDER_INTELLIGENCE_SPEC.md` §5's
+    own Phase 2 doesn't mention change-history/diff either -- no confirmed
+    phase. The underlying versioning mechanism (immutable tender_versions,
+    one row per change) is already built in 1.A/1.B; the missing piece is
+    the diff/notification surface, not the storage."""
+    pytest.skip("no confirmed phase as of 2026-08-05 -- see docs/decisions/OPEN-QUESTIONS.md (2026-08-05 entry)")
 
 
 def test_P109_enrichment_failure_not_masked_as_success():
     """v1: an enrichment failure could read as success. Control: independent
-    subresource statuses/counters (FR-TND-07). Mandatory from Phase 2
-    (`PLAN-MISSION-2.md` draft, §exit gate)."""
-    pytest.skip("mandatory from Phase 2 (PLAN-MISSION-2.md draft) -- enrichment pipeline not built yet")
+    subresource statuses/counters (FR-TND-07). `PLAN-MISSION-2.md`
+    (likely-superseded) assigned this to Phase 2 -- no confirmed phase now,
+    same as P108. Substantially demonstrated already at the mechanism level
+    in 1.D: `tests/integration/test_subresource_status_independence.py`
+    (a failed BOQ ingestion never masks/is masked by a successful details
+    ingestion for the same tender) -- not claimed as fully closed pending
+    the phase question above, but not starting from zero either."""
+    pytest.skip("no confirmed phase as of 2026-08-05 -- see docs/decisions/OPEN-QUESTIONS.md (2026-08-05 entry)")
 
 
 def test_P110_notification_read_state_is_per_user():
@@ -276,9 +291,11 @@ def test_P221_reality_provenance_quality_status_no_silent_master_import():
 
 def test_P223_deep_links_for_entity_filter_tab():
     """v1: no deep links for entity/filter/tab. Control: addressable routes,
-    reload/share restore state (FR-PLT-08, FR-TND-12). Mandatory from Phase
-    2 (`PLAN-MISSION-2.md` draft, §exit gate)."""
-    pytest.skip("mandatory from Phase 2 (PLAN-MISSION-2.md draft) -- no web UI/routing exists yet")
+    reload/share restore state (FR-PLT-08, FR-TND-12). `PLAN-MISSION-2.md`
+    (likely-superseded, see `docs/decisions/OPEN-QUESTIONS.md` 2026-08-05)
+    assigned this to Phase 2 -- no confirmed phase now; `apps/web` still
+    does not exist."""
+    pytest.skip("no confirmed phase as of 2026-08-05 -- see docs/decisions/OPEN-QUESTIONS.md (2026-08-05 entry)")
 
 
 def test_P224_malformed_hash_does_not_break_ui_startup():
@@ -299,9 +316,10 @@ def test_P225_frontend_split_into_feature_domain_modules():
 def test_P226_wcag_22_aa_automated_and_keyboard_nav():
     """v1: accessibility was not checked automatically. Control: WCAG 2.2 AA,
     automated axe scan + manual keyboard-navigation check of critical flows
-    (FR-UX-02). Mandatory from Phase 2 (`PLAN-MISSION-2.md` draft, §exit
-    gate)."""
-    pytest.skip("mandatory from Phase 2 (PLAN-MISSION-2.md draft) -- no web UI exists yet")
+    (FR-UX-02). `PLAN-MISSION-2.md` (likely-superseded, see
+    `docs/decisions/OPEN-QUESTIONS.md` 2026-08-05) assigned this to Phase 2
+    -- no confirmed phase now; no web UI exists yet regardless."""
+    pytest.skip("no confirmed phase as of 2026-08-05 -- see docs/decisions/OPEN-QUESTIONS.md (2026-08-05 entry)")
 
 
 def test_P227_release_gate_covers_all_critical_failure_classes():
