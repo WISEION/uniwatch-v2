@@ -35,6 +35,8 @@ PARSER_VERSION = "etender-v1"
 @dataclass
 class SchemaDriftDetected(Exception):
     drift: SchemaDrift
+    contract_name: str
+    raw_snapshot_id: int
 
     def __str__(self) -> str:
         return f"schema drift detected: {self.drift}"
@@ -78,7 +80,7 @@ async def _ingest(
             },
             correlation_id=correlation_id,
         )
-        raise SchemaDriftDetected(drift)
+        raise SchemaDriftDetected(drift, contract_name=contract.name, raw_snapshot_id=snapshot_id)
 
     tender_id = await get_or_create_tender(conn, source="etender", identity_key=identity_key)
 

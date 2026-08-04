@@ -257,3 +257,25 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** задача 1.C закрыта — `docs/architecture/egress-validator-contract.md` реализован полностью, P301-P304 (нумерация `TENDER_INTELLIGENCE_SPEC.md`) зелёные, включая реальный сетевой прогон против живого источника. Defense-in-depth сетевого уровня (network policy, `D-HOST`) — не в этой задаче, блокировано открытым решением владельца. 1.D (exception queue) — не начата, отдельное задание.
 
 **Блокеры:** нет новых.
+
+## 2026-08-05 — Задание №007: Phase 1, задача 1.D (exception queue)
+
+**Сделано:**
+- `migrations/0006_exception_queue.sql` + `packages/platform/exception_queue.py` — общая очередь: `enqueue_exception` (get-or-create по `(source, exception_type, correlation_id)` — повтор той же проблемы того же job не плодит новые строки, а увеличивает `attempts` существующей), `list_open` (фильтр по `category`), `schedule_retry` (только `retryable`, переиспользует `compute_backoff_seconds` из `jobs.py`), `close_exception` (идемпотентно — повторное закрытие не создаёт второе событие и не падает), `close_matching_needs_human` (P307 — один вызов закрывает все однотипные `needs_human` записи по `contract_name`) — FR-JOB-08.
+- `packages/tender/etender_connector.py` — `SchemaDriftDetected` дополнен полями `contract_name`/`raw_snapshot_id`, чтобы вызывающий код мог построить полноценную запись очереди со ссылкой на уже сохранённое raw evidence (raw снимок пишется до проверки дрейфа — существующее поведение 1.A, не менялось).
+- `packages/tender/bom_lines_job.py` — `process_bom_lines_page` ловит `SchemaDriftDetected`, кладёт `needs_human` запись (с `raw_ref`, `contract_name`, причиной) и **продолжает** пагинацию (`next_page` продвигается) вместо падения — одна дрейфующая страница не останавливает импорт 42-страничного BOQ навсегда (P305). BOQ-реконсиляция для этой страницы честно не засчитывается (`boq_status: None`), не выдаётся за успех.
+- Тесты:
+  - `tests/integration/test_exception_queue.py` — создание записи с raw_ref; **P306** (retryable: backoff, идемпотентное закрытие, без дублей на повторной ошибке той же проблемы); **P307** (одна правка контракта закрывает 2 из 3 записей — несвязанная запись другого контракта не трогается); `needs_human` не ретраится автоматически (guard на `category='retryable'` не матчит).
+  - `tests/integration/test_bom_lines_job_exception_handling.py` — **P305**: дрейф на реальной странице → job не падает, `next_page` продвигается, raw snapshot сохранён, ровно одна `needs_human` запись со ссылкой на нужный контракт и raw; повтор той же проблемы в рамках того же job не плодит вторую запись.
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests/ -q
+160 passed, 37 skipped in 58.48s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+131 files already formatted / All checks passed! / Success: no issues found in 42 source files / PASS: v1 untouched
+```
+
+**Дальше:** задача 1.D закрыта — P305/P306/P307 зелёные. Из механизма 1.D пока НЕ вписана обработка `EgressRejected` (1.C) и просроченных фактов (`INV-17`, TTL) в очередь конкретной интеграцией — сам механизм очереди generic и готов принять оба типа, конкретная проводка сделана только для schema drift (единственный тип, для которого у нас уже есть реальный сценарий на реальных данных). Осталась 1.E (qa gate) — последняя задача Phase 1, закрывает ворота фазы.
+
+**Блокеры:** нет новых.
