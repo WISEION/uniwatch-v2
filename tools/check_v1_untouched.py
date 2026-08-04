@@ -48,6 +48,7 @@ FORBIDDEN_LITERALS = [
 # itself, and the supervisor's own task notes) -- relative to REPO_ROOT.
 ALLOWLIST_PATHS = {
     "AGENTS.md",
+    "CLAUDE.md",
     "README.md",
     "tools/check_v1_untouched.py",
     "tools/v1-baseline.json",
