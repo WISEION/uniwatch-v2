@@ -32,7 +32,7 @@ python -m pytest tests/ -q
 
 # Single file / single test
 python -m pytest tests/unit/test_pagination_and_concurrency.py -q
-python -m pytest tests/integration/test_jobs_store.py::test_claim_skips_leased_rows -q
+python -m pytest tests/integration/test_jobs_store.py::test_two_concurrent_claims_do_not_get_the_same_job -q
 
 # v1-untouched gate (run after any change; stdlib-only, no deps needed)
 python tools/check_v1_untouched.py
@@ -44,9 +44,15 @@ uvicorn apps.api.main:app --reload
 
 # Run the worker (dev)
 python -m apps.worker.main
+
+# Lint / format / type-check (run all four before considering a change done)
+python -m ruff format --check .
+python -m ruff check .
+python -m mypy packages apps
+python tools/check_v1_untouched.py
 ```
 
-`DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`; both have dev defaults. `ruff` (lint+format) and `mypy` are wired in (`pyproject.toml`).
+`DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`; both have dev defaults.
 
 ## Architecture
 
@@ -86,9 +92,13 @@ Layer 3 never writes itself as layer 4. Records also carry `data_origin` (`real`
 - `jobs.py` — durable worker jobs: `SELECT ... FOR UPDATE SKIP LOCKED` claim, lease + heartbeat, checkpoint-based resume, exponential backoff retry, terminal failure after `max_attempts`. A job's identity (`job_type`/`params`/`source`/range/`correlation_id`) is fixed at enqueue and never mutated — a new range gets a new job row so a resume cursor can't leak across job identities.
 - `outbox.py` — transactional outbox: `enqueue` writes in the caller's own transaction (row exists iff the effect it describes was committed); `Publisher.publish_pending` delivers at-least-once and only moves `pending` → `published`, never back.
 - `idempotency.py`, `pagination.py` (opaque cursor, no offset), `concurrency.py` (If-Match / optimistic concurrency → 409) — apply these to any new mutating/paginated/listing endpoint rather than hand-rolling equivalents.
+- `egress/` — every outbound HTTP call goes through `validator.py` first: scheme allowlist → `registry.py` trusted-source check → DNS resolve of *every* returned address (not just the first) → block loopback/private/link-local/metadata/CGNAT/reserved/multicast/unspecified (IPv4 and IPv6) → `fetch.py` connects to the already-checked address, never re-resolving the hostname (a TOCTOU/rebinding gap otherwise). Rejections raise typed `EgressRejected`, never a silent `None`. Do not call `httpx`/`aiohttp`/sockets directly from a connector — route through this.
+- `exception_queue.py` — generic durable queue for ingestion failures that need a human or a retry (schema drift, `EgressRejected`, stale-TTL facts); a job records into it rather than swallowing or re-raising past its retry budget.
+
+**Tender ingestion pipeline** (`packages/tender/`, spans several files): `raw_snapshot.py` saves the exact source bytes unconditionally and first — evidence capture must never depend on whether the connector currently understands the response shape. `schema_drift.py` then checks the payload against the frozen contract in `etender_contract.py`; a drift raises `SchemaDriftDetected` (`etender_connector.py`) and is reported via the outbox instead of being silently mapped. Only a drift-free response reaches `normalized.py`. Resumable multi-page pagination and BOQ page/row-total reconciliation live separately in `bom_lines_job.py` / `boq_completeness.py` — `etender_connector.py`'s `ingest_*` functions each handle exactly one already-fetched page/response and know nothing about pagination or completeness.
 
 **Testing**: `tests/{unit,integration,contract,state,security,e2e,performance}` mirrors the CI gate split (`tests/README.md`) — `unit/` is pure logic (Fast gate); everything else needs real dependencies (Full gate). `tests/integration/conftest.py` spins up a session-scoped `testcontainers` Postgres container, gives each test a freshly dropped/recreated `public` schema, and applies all migrations before yielding an engine — Docker must be running locally to execute anything under `tests/integration/`.
 
 ## Working within phases
 
-Phase/gate discipline, WORKLOG/OPEN-QUESTIONS/ADR conventions: see `AGENTS.md` §4. Plan of record: `docs/reports/PLAN-MISSION-1.md` (Phase 0/1, active); `PLAN-MISSION-{2..8}.md` are drafts for later phases, not active work.
+Phase/gate discipline, WORKLOG/OPEN-QUESTIONS/ADR conventions: see `AGENTS.md` §4. Plan of record for Phase 0/1: `docs/reports/PLAN-MISSION-1.md`; for the phases after it, `TENDER_INTELLIGENCE_SPEC.md` (project root) now supersedes `PLAN-MISSION-{2..5}.md`'s framing (see `docs/CONTEXT.md` "Where things live"). Check `docs/reports/WORKLOG.md`'s most recent entry for the current phase/task and whether a phase exit gate is awaiting supervisor GO before the next phase starts — do not assume this file's phase reference is still current.
