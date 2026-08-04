@@ -66,3 +66,50 @@ def classify_line_type(name: str, description: str) -> str:
     if _PRIME_COST_RE.search(text):
         return "prime_cost"
     return "normal"
+
+
+@dataclass(frozen=True)
+class SpecRequirement:
+    kind: str  # "concrete_grade" | "rebar_class" | "standard_reference" | "or_equivalent"
+    raw_text: str
+
+
+# Concrete grade: Eurocode-style "B" class (B15..B60) or Soviet/regional
+# "marka" style "M" class (M100..M400) -- both are named directly in
+# TENDER_INTELLIGENCE_SPEC.md §5.1 ("марка бетона B25/B30"). No other
+# concrete-grade notation is implemented until real evidence of one is
+# captured.
+_CONCRETE_GRADE_RE = re.compile(r"\bB\s?(?:15|20|25|30|35|40|45|50|55|60)\b|\bM\s?(?:100|150|200|250|300|350|400)\b")
+
+# Rebar class: common A-series notations (A-I..A-IV, A400, A500). Best-effort
+# pattern set, not an exhaustive locked list -- extend when real evidence
+# with a different notation is captured (no source document enumerates the
+# full set).
+_REBAR_CLASS_RE = re.compile(r"\bA[- ]?(?:I{1,3}|IV|400|500|600)\b")
+
+# Standard reference: AZS / GOST (Latin or Cyrillic) / EN, each followed by
+# a number -- exactly the three families TENDER_INTELLIGENCE_SPEC.md §5.1
+# names ("стандарт AZS/ГОСТ/EN").
+_STANDARD_REFERENCE_RE = re.compile(r"\b(?:AZS|ГОСТ|GOST|EN)\s?\d+(?:[-.]\d+)*\b")
+
+# "Or equivalent": the exact Russian phrase the spec names («или
+# эквивалент»), plus its Azerbaijani cognate in the source data's own
+# language (used with "və ya", not "ekvivalent" alone -- "ekvivalent" alone
+# is too common a loanword to flag by itself) and the English cognate.
+_OR_EQUIVALENT_RE = re.compile(
+    r"или\s+эквивалент|(?:və\s+ya|ya\s+da)\s+ekvivalent|\bor\s+equivalent\b",
+    re.IGNORECASE,
+)
+
+
+def extract_spec_requirements(description: str) -> tuple[SpecRequirement, ...]:
+    found: list[SpecRequirement] = []
+    for match in _CONCRETE_GRADE_RE.finditer(description):
+        found.append(SpecRequirement(kind="concrete_grade", raw_text=match.group(0)))
+    for match in _REBAR_CLASS_RE.finditer(description):
+        found.append(SpecRequirement(kind="rebar_class", raw_text=match.group(0)))
+    for match in _STANDARD_REFERENCE_RE.finditer(description):
+        found.append(SpecRequirement(kind="standard_reference", raw_text=match.group(0)))
+    for match in _OR_EQUIVALENT_RE.finditer(description):
+        found.append(SpecRequirement(kind="or_equivalent", raw_text=match.group(0)))
+    return tuple(found)
