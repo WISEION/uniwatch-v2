@@ -159,3 +159,24 @@ owner should confirm whether: (a) frontend/linking/dashboard content lands in a 
 drafted, (b) it merges into one of the new document's existing phases, or (c) `PLAN-MISSION-2.md`'s
 content stands alongside the new Phase 2 rather than being superseded by it. Not blocking to start
 2.A (BOQ line depth) now, which both documents' Phase 2 agree on.
+
+## 2026-08-05 — Task 2.A: preliminaries/provisional-sum/prime-cost keywords are English-only
+
+**Context:** `TENDER_INTELLIGENCE_SPEC.md` §5.1 names `preliminaries`, `provisional sums`, and `prime cost`
+as line types to detect, giving only their English terms. The actual source data (eTender, Azerbaijan) is
+in Azerbaijani.
+
+**Deviation/assumption:** `classify_line_type` (`packages/tender/boq_line_model.py`) matches English keywords
+only. No Azerbaijani or Russian equivalent terms are implemented, because no source document (the spec, the
+PRD, the master plan) supplies them, and guessing a translation would be inventing an unsourced fact
+(`AGENTS.md` hard ban #2's spirit, even though this isn't a `TBD-nn` financial number specifically).
+
+**Consequence that must not be silently dropped:** a real Azerbaijani-language BOQ line that IS a
+preliminaries/provisional-sum/prime-cost line, described only in Azerbaijani, will currently classify as
+`normal` — a false negative, not a crash or a guess. `unit_status`/schema-drift-style visibility does not
+cover this; it is a silent-until-flagged gap in the classifier's recall, not its precision.
+
+**Owner follow-up needed:** Yes, non-blocking. Confirm the correct Azerbaijani/Russian terms for these three
+line types (or confirm English-only is acceptable because BOQ documents on this source are bilingual/English
+in practice for these specific line types) before Phase 2.C (forecast engine) or any matching/costing logic
+starts relying on `line_type` for anything beyond the English-labeled real-world cases proven so far.
