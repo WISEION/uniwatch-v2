@@ -23,10 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.platform import outbox
 
-from .etender_contract import BOM_LINES_PAGE_CONTRACT, EVENT_DETAILS_CONTRACT, EVENTS_LIST_PAGE_CONTRACT
+from .etender_contract import BOM_LINE_ITEM_CONTRACT, BOM_LINES_PAGE_CONTRACT, EVENT_DETAILS_CONTRACT, EVENTS_LIST_PAGE_CONTRACT
 from .normalized import TenderVersion, create_normalized_version, get_or_create_tender
 from .raw_snapshot import save_raw_snapshot
-from .schema_drift import SchemaDrift, detect_schema_drift
+from .schema_drift import SchemaDrift, detect_schema_drift, detect_schema_drift_over_items
 from .source_contract import SourceContract, canonical_identity
 
 PARSER_VERSION = "etender-v1"
@@ -51,6 +51,8 @@ async def _ingest(
     payload: dict[str, Any],
     normalize_fields: Callable[[dict[str, Any]], dict[str, Any]],
     correlation_id: str,
+    item_contract: SourceContract | None = None,
+    items_extractor: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> TenderVersion:
     identity_key = canonical_identity(contract, identity_params)
 
@@ -65,14 +67,20 @@ async def _ingest(
     )
 
     drift = detect_schema_drift(contract, payload)
+    if not drift.has_drift and item_contract is not None and items_extractor is not None:
+        drift = detect_schema_drift_over_items(item_contract, items_extractor(payload))
+        drifted_contract_name = item_contract.name
+    else:
+        drifted_contract_name = contract.name
+
     if drift.has_drift:
         await outbox.enqueue(
             conn,
             aggregate_type="tender_source_contract",
-            aggregate_id=contract.name,
+            aggregate_id=drifted_contract_name,
             event_type="schema_drift_event",
             payload={
-                "contract": contract.name,
+                "contract": drifted_contract_name,
                 "identity_key": identity_key,
                 "added_fields": list(drift.added_fields),
                 "removed_fields": list(drift.removed_fields),
@@ -80,7 +88,7 @@ async def _ingest(
             },
             correlation_id=correlation_id,
         )
-        raise SchemaDriftDetected(drift, contract_name=contract.name, raw_snapshot_id=snapshot_id)
+        raise SchemaDriftDetected(drift, contract_name=drifted_contract_name, raw_snapshot_id=snapshot_id)
 
     tender_id = await get_or_create_tender(conn, source="etender", identity_key=identity_key)
 
@@ -154,6 +162,8 @@ async def ingest_bom_lines_page(
         payload=payload,
         normalize_fields=normalize_fields,
         correlation_id=correlation_id,
+        item_contract=BOM_LINE_ITEM_CONTRACT,
+        items_extractor=lambda p: p["items"],
     )
 
 
