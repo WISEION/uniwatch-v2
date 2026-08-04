@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any
 
 _UNIT_CANONICAL_MAP: dict[str, str] = {
     "ədəd": "pcs",  # Azerbaijani "piece" -- observed on all 3 real captured pages
@@ -113,3 +115,50 @@ def extract_spec_requirements(description: str) -> tuple[SpecRequirement, ...]:
     for match in _OR_EQUIVALENT_RE.finditer(description):
         found.append(SpecRequirement(kind="or_equivalent", raw_text=match.group(0)))
     return tuple(found)
+
+
+@dataclass(frozen=True)
+class BoqLine:
+    source_line_id: int
+    page_number: int
+    section: str | None
+    category_code: str | None
+    description: str
+    unit_raw: str
+    unit_canonical: str | None
+    unit_status: str
+    qty: Decimal
+    line_type: str
+    spec_requirements: tuple[SpecRequirement, ...]
+    rate: Decimal | None
+    amount: Decimal | None
+
+
+def _to_decimal_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    return Decimal(str(value))
+
+
+def build_boq_lines(*, page_number: int, items: list[dict[str, Any]]) -> list[BoqLine]:
+    lines: list[BoqLine] = []
+    for item in items:
+        unit = canonicalize_unit(item["unitOfMeasure"])
+        lines.append(
+            BoqLine(
+                source_line_id=item["id"],
+                page_number=page_number,
+                section=item.get("name"),
+                category_code=item.get("categoryCode"),
+                description=item["description"],
+                unit_raw=unit.raw,
+                unit_canonical=unit.canonical,
+                unit_status=unit.status,
+                qty=Decimal(str(item["quantity"])),
+                line_type=classify_line_type(item.get("name", ""), item["description"]),
+                spec_requirements=extract_spec_requirements(item["description"]),
+                rate=_to_decimal_or_none(item.get("rate")),
+                amount=_to_decimal_or_none(item.get("amount")),
+            )
+        )
+    return lines

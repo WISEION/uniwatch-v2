@@ -4,9 +4,13 @@ canonical unit (INV-11 no silent fallback)."""
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from packages.tender.boq_line_model import (
+    BoqLine,
     CanonicalUnit,
     SpecRequirement,
+    build_boq_lines,
     canonicalize_unit,
     classify_line_type,
     extract_spec_requirements,
@@ -123,3 +127,105 @@ def test_extracts_multiple_requirements_from_one_description():
     reqs = extract_spec_requirements("Beton B30, AZS 5678 standartına uyğun, və ya ekvivalent")  # noqa: RUF001
     kinds = {r.kind for r in reqs}
     assert kinds == {"concrete_grade", "standard_reference", "or_equivalent"}
+
+
+def test_builds_lines_from_synthetic_items_covering_every_type():
+    items = [
+        {
+            "id": 1,
+            "name": "Section A",
+            "description": "Preliminaries and site setup",
+            "unitOfMeasure": "ədəd",
+            "quantity": 1,
+            "categoryCode": "999",
+        },
+        {
+            "id": 2,
+            "name": "Section A",
+            "description": "Beton B25 tökülməsi",
+            "unitOfMeasure": "m3",
+            "quantity": Decimal("12.5"),
+            "categoryCode": "999",
+        },
+        {
+            "id": 3,
+            "name": "Section A",
+            "description": "Provisional sum for utilities",
+            "unitOfMeasure": "qutu",
+            "quantity": 1,
+            "categoryCode": "999",
+        },
+    ]
+    lines = build_boq_lines(page_number=1, items=items)
+
+    assert len(lines) == 3
+    assert all(isinstance(line, BoqLine) for line in lines)
+
+    preliminaries, concrete, provisional = lines
+    assert preliminaries.line_type == "preliminaries"
+    assert preliminaries.unit_status == "mapped"
+
+    assert concrete.line_type == "normal"
+    assert concrete.qty == Decimal("12.5")
+    assert concrete.unit_canonical == "m3"
+    assert any(r.kind == "concrete_grade" for r in concrete.spec_requirements)
+
+    assert provisional.line_type == "provisional_sum"
+    assert provisional.unit_status == "unmapped"  # "qutu" is not in the canonical map
+    assert provisional.unit_raw == "qutu"
+
+
+def test_source_line_id_and_page_number_are_preserved():
+    items = [{"id": 42, "name": "S", "description": "d", "unitOfMeasure": "m", "quantity": 1, "categoryCode": "1"}]
+    lines = build_boq_lines(page_number=7, items=items)
+    assert lines[0].source_line_id == 42
+    assert lines[0].page_number == 7
+
+
+def test_rate_and_amount_absent_from_source_stay_none_never_fabricated():
+    # No real captured BOQ item has ever had rate/amount -- confirmed
+    # against all 3 fixture pages. build_boq_lines must not invent zeros.
+    items = [{"id": 1, "name": "S", "description": "d", "unitOfMeasure": "m", "quantity": 1, "categoryCode": "1"}]
+    line = build_boq_lines(page_number=1, items=items)[0]
+    assert line.rate is None
+    assert line.amount is None
+
+
+def test_rate_and_amount_used_verbatim_when_source_does_provide_them():
+    items = [
+        {
+            "id": 1,
+            "name": "S",
+            "description": "d",
+            "unitOfMeasure": "m",
+            "quantity": 1,
+            "categoryCode": "1",
+            "rate": 10,
+            "amount": 10,
+        }
+    ]
+    line = build_boq_lines(page_number=1, items=items)[0]
+    assert line.rate == Decimal("10")
+    assert line.amount == Decimal("10")
+
+
+def test_builds_lines_from_real_page_1_fixture():
+    import json
+    from pathlib import Path
+
+    fixture = (
+        Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender" / "event_355920_bomlines_page1.raw.json"
+    )
+    payload = json.loads(fixture.read_bytes())
+
+    lines = build_boq_lines(page_number=1, items=payload["items"])
+
+    assert len(lines) == payload["itemsInPage"] == 100
+    for line in lines:
+        assert line.qty > 0
+        assert line.unit_raw in ("ədəd", "m")
+        assert line.category_code == "72121403"
+        # Honest real-data assertion (see plan's "Ground truth" section):
+        # this specific real fixture contains zero preliminaries/provisional/
+        # prime-cost lines -- every line is genuinely "normal" here.
+        assert line.line_type == "normal"
