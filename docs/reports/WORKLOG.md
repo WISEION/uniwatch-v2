@@ -176,3 +176,15 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** задача 1.A закрыта в границах этого задания — все три пункта `PLAN-MISSION-1.md` §3 1.A выполнены на реальных данных. 1.B (resumable pagination, BOQ completeness reconciliation), 1.C (security: egress validator реализация, SSRF suite), 1.D (exception queue) — НЕ начаты, отдельные задания. Ожидание вердикта супервайзера.
 
 **Блокеры:** нет новых для 1.A. Два открытых пункта для владельца/будущих задач зафиксированы в `docs/decisions/OPEN-QUESTIONS.md` (VÖEN/estimatedAmount на details-ресурсе; list-эндпоинт контракт не восстановлен — блокирует полный охват 1.B, не 1.A).
+
+## 2026-08-04 — Дополнительная сессия: разрешены оба открытых пункта из задания №004
+
+**Сделано (вне кода задачи 1.A, которая уже закрыта и закоммичена):**
+- Реальный network-трейс (`claude-in-chrome`, живая страница поиска тендеров) показал фактический запрос фронтенда к списку: `GET /api/events?EventType=&PageSize=6&PageNumber=1&EventStatus=1&Keyword=&buyerOrganizationName=&documentNumber=&publishDateFrom=&publishDateTo=&AwardedparticipantName=&AwardedparticipantVoen=&DocumentViewType=&IsArchived=false` — все перечисленные ключи должны присутствовать в query (даже пустые), `PageSize`/`PageNumber`/`EventStatus`/`IsArchived` — непустые. Ни cookie, ни CSRF-токен не нужны — подтверждено голым `curl` (200 OK). Причина прежних `400`: ASP.NET model binding падает на весь объект, если непустой non-nullable параметр (`EventStatus`/`IsArchived`) вообще отсутствует в query — без детализации по полю в теле ошибки.
+- Захвачен и зафиксирован третий реальный fixture: `fixtures/tender-snapshots/etender/events_list_page1.raw.json` (checksum в `MANIFEST.md`). Поля list-item: `eventId, eventType, eventStatus, buyerOrganizationName, eventName, publishDate, endDate, hasNewVersion, awardedParticipantName, awardedParticipantVoen, documentViewType, actualVersionId, privateRfxId, hasRecreated` — **ни VÖEN покупателя, ни денежного поля нет**.
+- Это **подтверждает** (не просто гипотеза) разрешение первого пункта: факт "0/103 VÖEN/денег" верен именно для list-ресурса; `organizationVoen`/`estimatedAmount` — поля только details-субресурса. Не противоречие, а ровно случай FR-TND-07 (независимые субресурсы, разные поля). `docs/decisions/OPEN-QUESTIONS.md` — оба пункта помечены RESOLVED с доказательствами.
+- Код 1.A не менялся — коннектор уже был написан без предположений в любую сторону (surfaces both fields as present-when-provided). Это разрешает открытые пункты документально, не код.
+
+**Дальше:** оба блокера для будущей задачи 1.B закрыты. 1.B (resumable pagination, BOQ completeness reconciliation) может начинаться с готовым query-контрактом list-ресурса, когда будет открыта отдельным заданием — сама 1.B не начата.
+
+**Блокеры:** нет.

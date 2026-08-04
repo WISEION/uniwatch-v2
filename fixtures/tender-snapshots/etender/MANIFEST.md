@@ -1,12 +1,14 @@
 # eTender frozen fixtures — capture manifest
 
 Real, live captures against `https://etender.gov.az` (INT-01, INT-02, FR-TND-10 — empirical contract, not
-fabricated data). Captured 2026-08-04, per task 1.A (`docs/reports/PLAN-MISSION-1.md` §3).
+fabricated data). Captured 2026-08-04, per task 1.A (`docs/reports/PLAN-MISSION-1.md` §3) and a follow-up
+discovery session the same day (events-list query contract).
 
 | File | Method | URL | Captured at (UTC) | HTTP status | sha256 |
 |---|---|---|---|---|---|
 | `event_355920_details.raw.json` | GET | `https://etender.gov.az/api/events/355920` | 2026-08-04T12:21:32Z | 200 | `dabd9dc504c630e77d577dccdfed36e05796ceabbcbd66f98fd6c51af7c85b80` |
 | `event_355920_bomlines_page1.raw.json` | GET | `https://etender.gov.az/api/events/355920/bomLines?PageSize=100&PageNumber=1` | 2026-08-04T12:21:32Z | 200 | `bb0c308425394fe1a26af1c9e6f4677c8ffa05f128dcb01cba5681941a0625d4` |
+| `events_list_page1.raw.json` | GET | `https://etender.gov.az/api/events?EventType=&PageSize=6&PageNumber=1&EventStatus=1&Keyword=&buyerOrganizationName=&documentNumber=&publishDateFrom=&publishDateTo=&AwardedparticipantName=&AwardedparticipantVoen=&DocumentViewType=&IsArchived=false` | 2026-08-04T~13:05Z | 200 | `b6a5d6f2080ffa5170ac7b53bbe9f4c51eec76733a236ef97fe2518c720b2f63` |
 
 Files are the exact raw response bytes, unmodified — this is layer-1 raw evidence
 (`docs/adr/0003-data-authority-and-provenance.md`). Do not hand-edit them; a re-capture creates a new
@@ -17,32 +19,27 @@ dated file, never an edit of these.
 - `event_355920_bomlines_page1.raw.json`: `totalPages: 42`, `totalItems: 4135` — matches the audit-verified
   fact in `uniwatch-v2-project.md` ("event 355920 → 4 135 bomLines over 42 pages") exactly. Confirms BOQ is
   structured and complete at the API side; v1's loss was an ingestion defect, not a source limit.
+- `events_list_page1.raw.json` fields per item: `eventId`, `eventType`, `eventStatus`,
+  `buyerOrganizationName`, `eventName`, `publishDate`, `endDate`, `hasNewVersion`,
+  `awardedParticipantName`, `awardedParticipantVoen`, `documentViewType`, `actualVersionId`,
+  `privateRfxId`, `hasRecreated` — **no VÖEN field for the buyer and no monetary field at all**. This
+  **confirms** (not just theorizes) the resolution of the VÖEN/money question below: the "0/103, no
+  VÖEN, no money" fact was measured against the list resource, and it holds there. `awardedParticipantVoen`
+  is a different field entirely (the winning bidder's VÖEN, only populated after award — null on every
+  currently-open item captured here), not the buyer's.
+- The events-list query contract discovered via a live browser network trace (not guessed): `GET
+  /api/events` requires **every** listed query key to be present in the URL, even empty
+  (`EventType=&Keyword=&buyerOrganizationName=&documentNumber=&publishDateFrom=&publishDateTo=&AwardedparticipantName=&AwardedparticipantVoen=&DocumentViewType=`),
+  plus non-empty `PageSize`, `PageNumber`, `EventStatus` (int), `IsArchived` (bool). No CSRF token or
+  cookie is required — a bare `curl` with this exact key set returns `200` (verified, see fixture above).
+  This is presumably why every prior guess (task 1.A session) got a generic `400`: ASP.NET model binding
+  for the query DTO fails whole-object when a required non-nullable property (`EventStatus`/`IsArchived`)
+  has no bound value, with no field-level detail surfaced in the error body.
 
-## What these contradict — flagged, not silently reconciled
+## Resolved — see `docs/decisions/OPEN-QUESTIONS.md` for the full record
 
-- `event_355920_details.raw.json` has **`organizationVoen: "1000418451"`** and
-  **`estimatedAmount: 16922253.74`** populated. This appears to contradict the locked fact "eTender feed
-  carries no VÖEN (0/103 events) and no monetary values (0/103)" (`uniwatch-v2-project.md`,
-  `docs/CONTEXT.md`). Working theory, **not yet confirmed**: the 0/103 measurement was taken against the
-  **events list** resource, while this capture is the **event details** resource — i.e. VÖEN/amount may be
-  a details-only field, absent from the list payload (list-endpoint contract could not be captured this
-  session — see `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-04 entries). Recorded there for owner
-  follow-up; the connector code in this task does NOT assume either resolution and surfaces both fields
-  as present-when-source-provides-them, never fabricated and never silently dropped.
-- `event_355920_details.raw.json` has `"eventType": 7` — consistent with the documented "`EventType`
-  filter unreliable, actual value may not match request parameter" contract fact, though this specific
-  capture did not itself filter by `EventType` (no comparable request/actual divergence pair was captured
-  this session for the details resource; the divergence fact is carried over from the PRD's own
-  28.07.2026 live-check, not re-derived here).
-
-## What could not be captured this session
-
-- The events **list** endpoint's exact query contract (`GET /api/events`) returned
-  `400 Bad Request` (RFC 9110 problem+json, no field-level detail) for every parameter combination tried
-  (`PageSize`/`PageNumber`, `pageSize`/`pageNumber`, `Skip`/`Take`, `PageIndex`, with/without `EventType`,
-  with/without a publish-date range) and the bundled frontend JS did not reveal the parameter names via
-  static string search. `POST /api/events` returned `405 Method Not Allowed` (confirms GET is the right
-  verb, contract just not reverse-engineered from bounded probing). List-resource pagination is 1.B scope,
-  not 1.A — this does not block task 1.A, which only needs one working empirical-contract resource pair
-  (details + BOQ, both captured successfully above). Logged in `docs/decisions/OPEN-QUESTIONS.md` for
-  whoever picks up 1.B.
+- ~~VÖEN/monetary value contradiction~~ — confirmed resolved: list resource has neither field (buyer VÖEN
+  or money), details resource has both. Not a contradiction; two different subresources with different
+  shapes, exactly what `FR-TND-07` (independent subresource status) anticipates.
+- ~~Events-list query contract not captured~~ — confirmed resolved: see the contract above. Unblocks task
+  1.B (resumable pagination), which has not started.
