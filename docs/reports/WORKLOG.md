@@ -332,3 +332,19 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** task 2.A closed. Next per `TENDER_INTELLIGENCE_SPEC.md` §5: task 2.B (signal ingestion). The 5 stale-schema-version test failures above should be fixed first (one-line hardcoded-constant bump in two files), not carried forward silently into 2.B.
 
 **Блокеры:** нет новых. Non-blocking open question recorded in `docs/decisions/OPEN-QUESTIONS.md` (Azerbaijani/Russian preliminaries/provisional-sum/prime-cost keyword equivalents not implemented, no source document supplies them). Non-blocking test-debt item recorded above (stale hardcoded schema version `6` in two test files, now needs to be `7`).
+
+## 2026-08-05 — Follow-up: fix stale hardcoded schema version (6 -> 7) after task 2.A's migration
+
+**Сделано:** the 5 test failures flagged (not hidden) in task 2.A's entry above are fixed. `tests/integration/test_health.py` (`expected_schema_version=6` in the `client` fixture, `body["schema_version"] == 6` assertion) and `tests/integration/test_migrations_runner.py` (four assertions: `versions == {1, 2, 3, 4, 5, 6}`, two `current_version() == 6` checks, `{2, 3, 4, 5, 6}` applied-set check, `expected_version=6`/`version == 6` in the startup-check test) all bumped `6` -> `7`, matching the real ledger version after `migrations/0007_boq_lines.sql` (task 2.A's Task 1). Also bumped `packages/platform/settings.py`'s `EXPECTED_SCHEMA_VERSION` env-var default from `6` to `7` — same root cause, the app's own dev-default would otherwise refuse to start against the real current schema (`FR-PLT-12` rule 2), not just these two test files.
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests/ -q
+205 passed, 33 skipped in 222.64s (0:03:42)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+142 files already formatted / All checks passed! / Success: no issues found in 44 source files / PASS: v1 untouched (v1 paths not present on this machine, baseline check skipped)
+```
+
+**Дальше:** Phase 2 task 2.A is now genuinely closed with a fully green Full gate (0 failures). Next per `TENDER_INTELLIGENCE_SPEC.md` §5: task 2.B (signal ingestion).
+
+**Блокеры:** нет.
