@@ -84,3 +84,22 @@ EVENTS_LIST_PAGE_CONTRACT = SourceContract(
         FieldSpec("lastItem", "number"),
     ),
 )
+
+# Per-item shape inside BOM_LINES_PAGE_CONTRACT's `items` array (INT-01,
+# INT-02). Verified against every item across all 3 captured pages of
+# event 355920's BOQ (see MANIFEST.md) -- categoryCode is constant across
+# every item in this fixture (a page/tender-level classification, not a
+# per-line distinguishing code), kept anyway because it is the only real
+# field mapping to TENDER_INTELLIGENCE_SPEC.md §5.1's `code` concept.
+BOM_LINE_ITEM_CONTRACT = SourceContract(
+    name="etender.bom_lines_page.item",
+    identity_query_keys=("id",),
+    fields=(
+        FieldSpec("id", "number"),
+        FieldSpec("name", "string"),
+        FieldSpec("description", "string"),
+        FieldSpec("unitOfMeasure", "string"),
+        FieldSpec("quantity", "number"),
+        FieldSpec("categoryCode", "string"),
+    ),
+)
