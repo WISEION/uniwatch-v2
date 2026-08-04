@@ -101,3 +101,17 @@ $ python -m pytest tests/ -q
 **Дальше:** задача 0.B (backend-core + worker-connector) закрыта в границах этого задания. Ожидание вердикта супервайзера на переход к 0.C (security review threat model) / 0.D (CI gates wiring, migration rehearsal, regression-стабы).
 
 **Блокеры:** нет новых.
+
+## 2026-08-04 — Задание №004: Phase 0, задача 0.C (security)
+
+**Сделано:**
+- Ревью и утверждение черновика threat model (`docs/architecture/threat-model.md`, статус: draft → reviewed/approved, совместно 0.A/0.C) — NFR-SEC-01..09, exit-критерий Phase 0 "architecture and threat model approved". Утверждена модель (assets/границы/угрозы/назначение контролей), не реализация — T1-T3/T6-T8 остаются "designed, not built" по столбцу Status, это отражает реальное состояние 0.B, а не занижение.
+  - Усилен T1: явно зафиксировано требование connect-to-the-checked-IP (не повторный resolve хоста HTTP-клиентом) — защита от DNS rebinding/TOCTOU между проверкой и коннектом, отдельно от T2 (registry check).
+  - Добавлен T12 (найдено при ревью, не было в черновике 0.A): `X-Correlation-Id` — клиентский заголовок, эхуется без валидации в логи и response header (`packages/platform/correlation.py`, код 0.B) — потенциальный log/header injection. Не блокер Phase 0 exit (observability, не authZ/data-integrity контроль), зафиксировано как открытый gap для 0.B/1.A, не молча пропущено.
+- `docs/architecture/egress-validator-contract.md` — контракт центрального egress validator + trusted source registry (NFR-SEC-01..03, INV-10, P006): concептуальная схема реестра источников (host/scheme/status/scanner_run_reference/audit-поля), алгоритм валидации per-hop (scheme → registry → resolve → IP-range check для всех адресов включая IPv6 metadata-диапазоны → connect к проверенному IP → повтор на каждом redirect), интерфейс для 1.C (без кода — реализация Phase 1, здесь только контракт и место в архитектуре, как и требует `PLAN-MISSION-1.md` §2 0.C). Defense-in-depth (T3, network-policy слой) явно не решается здесь — блокировано `D-HOST`.
+- `.ci/README.md` — секция "Security gate — stub plan (0.C)": план для secret scan / dependency (SCA) scan / license scan / image digest integrity (NFR-SEC-07, NFR-SEC-09) — категории инструментов-кандидатов, не зафиксированный выбор (выбор — решение 0.D, когда gate реально подключается, та же дисциплина, что и с выбором migration runner в 0.A).
+- `docs/operations/container-conventions.md` — конвенция non-root / read-only root filesystem / no secrets baked into image / minimal base image (NFR-SEC-08, T7 threat model). Dockerfile ещё не существует в репозитории — конвенция фиксируется для 0.B+, когда он появится.
+
+**Дальше:** задача 0.C закрыта в границах этого задания. Осталась 0.D (qa, последняя в Phase 0): CI Fast/Full gate wiring, migration rehearsal test, invariant-violation-quarantine test, worker-restart-resume test, стабы 42 regression-тестов — после чего Exit gate Phase 0 может рассматриваться супервайзером.
+
+**Блокеры:** нет новых. T12 (correlation id injection) — не блокер, но открытый пункт для будущей задачи (0.B follow-up или 1.A), см. выше.

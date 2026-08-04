@@ -1,6 +1,6 @@
 # Threat model (draft) — UNIWatch-v2
 
-**Status:** Draft, produced by 0.A (architect). To be reviewed and jointly approved with 0.C (security) before Phase 0 exit — "architecture and threat model approved" is a Phase 0 exit criterion (kickoff TZ, `PLAN-MISSION-1.md` §2 Exit gate). Do not treat this file as approved until 0.C has signed off.
+**Status:** Reviewed and approved by 0.C (security), joint with 0.A (architect) — "architecture and threat model approved" (Phase 0 exit criterion, `PLAN-MISSION-1.md` §2 Exit gate) is satisfied by this document. Approval covers the *model* (assets, boundaries, threats, and which control closes each one) — it does not mean every control is already built; the Status column per threat states what Phase 0/1 actually implements versus what is designed-but-deferred (T3/T4/T5/T8, blocked on `D-HOST`/`D-IDP` or later phases).
 **Date:** 2026-08-04
 **Requirements:** NFR-SEC-01..09, INV-10, P006, master plan §17 risk register, v1 audit lessons (S12 OWASP SSRF Prevention)
 
@@ -43,7 +43,7 @@ Boundaries that matter most in Phase 0/1:
 
 | # | Threat | Control | Requirement | Status Phase 0/1 |
 |---|---|---|---|---|
-| T1 | SSRF: connector follows a redirect or a document link into loopback/private/link-local/metadata address space (IPv4 or IPv6) — this is exactly how v1 was hit via an RSS link redirect | Central egress validator checks the target **before DNS resolution and after every redirect**; blocks loopback/private/link-local/metadata ranges, both IPv4 and IPv6 | NFR-SEC-01, INV-10, P006 | Designed in 0.A/0.C, implemented in 1.C. Not yet built — this file records the contract, not the code. |
+| T1 | SSRF: connector follows a redirect or a document link into loopback/private/link-local/metadata address space (IPv4 or IPv6) — this is exactly how v1 was hit via an RSS link redirect | Central egress validator checks the target **before DNS resolution and after every redirect**; blocks loopback/private/link-local/metadata ranges, both IPv4 and IPv6. The validator resolves the hostname itself and connects to the **validated IP it just checked** (not a hostname the HTTP client re-resolves a moment later) — otherwise a TTL-0/rebinding DNS answer could swap in a private address between check and connect (classic SSRF-via-DNS-rebinding TOCTOU, distinct from T2's registry check) | NFR-SEC-01, INV-10, P006 | Designed in 0.A/0.C, implemented in 1.C. Not yet built — this file records the contract, not the code. |
 | T2 | Connector is pointed at an untrusted/unregistered host (compromised config, malicious redirect target, typo) | Trusted source registry: outbound requests are only permitted to hosts explicitly registered; a new source is validated by an actual scanner run before being trusted, not by a structural check alone (lesson from ADB/0.18.0: "HTTPS + status code + trust level" was not sufficient) | NFR-SEC-03 | Contract defined in 0.A/0.C; implementation in 1.C |
 | T3 | Defense-in-depth gap: application-layer egress control has a bug and nothing else stops the outbound call | Network-policy-level egress control independent of application code (S12 OWASP SSRF Prevention) | NFR-SEC-02 | Design placeholder — exact mechanism (container/network policy) depends on `D-HOST`, tracked as blocked-on-owner-decision, not a Phase 0/1 blocker |
 | T4 | CSRF / session riding once a web UI exists | CSRF tokens, Origin verification, secure cookie flags | NFR-SEC-05 | Out of Phase 0/1 build scope (no login flow yet); recorded so 0.B does not omit it later |
@@ -54,6 +54,7 @@ Boundaries that matter most in Phase 0/1:
 | T9 | v2 process/credential accidentally reaches v1 paths (bug, copy-paste config, careless script) | No write-credentials to v1 paths in any v2 process; CI check scans for v1 path literals and fails the build if touched | FR-MIG-04, NEG-01, NEG-02 | Implemented in this task — see `tools/check-v1-untouched.py` and `.ci/v1-untouched.yml` |
 | T10 | Migration/backfill runs implicitly at every app startup, creating an uncontrolled attack/failure surface (schema drift, partial backfill under load) | Schema changes only via versioned migrations with pre/postflight; schema never changes at startup; backfill is a separate, explicitly invoked operation | FR-PLT-12, DM-06 | Ledger convention and directory skeleton implemented in this task — see `migrations/README.md` |
 | T11 | Invariant violation (e.g., FK violation) reaches production data undetected | Constraint violation triggers quarantine/read-only on the affected area and notifies operators; CI blocks on an intentionally-triggered failure | FR-PLT-13, P007 | Contract recorded here; test harness is 0.D scope, not yet built |
+| T12 | Log/header injection via the client-supplied `X-Correlation-Id` header — `CorrelationIdMiddleware` (`packages/platform/correlation.py`) currently echoes an incoming value verbatim into the response header and into every structured log line for that request/job, with no length limit or character validation; a value containing CRLF/control characters or exceeding a reasonable size could forge log lines or break the response header framing | Validate the incoming header against a fixed format (e.g. UUID) before binding it; generate a fresh id instead of trusting the input when it fails validation, rather than rejecting the whole request | NFR-SEC-01 (input validation), NFR-OBS-01 | **Found during 0.C review — not yet fixed.** Tracked as a gap to close in 0.B/1.A follow-up, not a Phase 0 exit blocker since correlation id is an observability aid, not an authorization or data-integrity control |
 
 ## 5. Out of scope for this draft (explicitly deferred, not forgotten)
 
@@ -64,4 +65,11 @@ Boundaries that matter most in Phase 0/1:
 
 ## 6. Review status
 
-Reviewed by: architect (0.A) — draft only. **Pending:** 0.C (security) joint review and sign-off before this is cited as a closed Phase 0 exit criterion.
+Reviewed by: architect (0.A), security (0.C) — 2026-08-04. Joint review outcome:
+
+- T1-T11 (0.A draft): scope, assets, trust boundaries, and control assignment confirmed correct against the PRD/master-plan NFR-SEC requirements and the v1 audit lessons they trace to; no threat removed or downgraded.
+- T1 strengthened: added the DNS-rebinding/TOCTOU requirement (validate-then-connect-to-the-checked-IP, not a re-resolved hostname) — the original wording covered redirects but not a rebinding attack between validation and connection.
+- T12 added: `X-Correlation-Id` is client-supplied and echoed unvalidated into logs and response headers (`packages/platform/correlation.py`, built in 0.B). Not a Phase 0 exit blocker (observability, not an authZ/data-integrity control) but tracked as a concrete follow-up, not left implicit.
+- Nothing in this document is cited as a closed *implementation*: T1-T3, T6-T8 remain "designed, not yet built" per their Status column, and that is accurate as of 0.B (backend-core/worker-connector) — the egress validator, CI security scans, and container hardening are Phase 1/0.D/6 work respectively (see `docs/architecture/egress-validator-contract.md`, `.ci/README.md`, `docs/operations/container-conventions.md`).
+
+This satisfies the Phase 0 exit criterion "architecture and threat model approved" as a reviewed *model*; the Exit gate table's other rows (migration rehearsal, worker-restart test, CI Fast/Full gates) still require their own evidence from 0.D.
