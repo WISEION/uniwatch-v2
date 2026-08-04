@@ -28,6 +28,17 @@
 
 **Блокеры:** выполнение `tools/check_v1_untouched.py` не подтверждено запуском в этой сессии (permission на python не выдана) — доказательство "v1 не тронут" для Exit gate Phase 0 пока неполное, нужен реальный прогон. Остальные блокеры не изменились (см. запись №001): D-HOST/D-IDP/D-SRC/D-LANG блокируют только свои фазы.
 
+## 2026-08-04 — Черновик PLAN-MISSION-2 (Phase 2)
+
+**Сделано (вне очереди задания №003, по прямому запросу владельца — «сначала план»):**
+- Написан `docs/reports/PLAN-MISSION-2.md`: Phase 2 (Real Tender experience, documents, BOQ), задачи 2.A architect → 2.B backend-core / 2.C worker-connector (параллельно) → 2.D frontend → 2.E security/qa, со ссылками на FR-TND-01..12/FR-DQ-01..05/FR-UX-01..05/FR-PLT-08/DM-04/INV-01/INV-04 и regression P001/P003/P004/P108/P109/P223/P226.
+- Явно помечено ЧЕРНОВИКОМ: не активируется до вердикта GO по Exit gate Phase 1 (текущий статус: Phase 0 задача 0.B ещё не принята супервайзером, Phase 1 не начата).
+- Код не писался, `apps/web` не создавался — только план.
+
+**Дальше:** ожидание — (a) закрытия Task-003 (0.B) и Exit gate Phase 0/1 супервайзером; (b) при GO по Phase 1 — ревью и вердикт по PLAN-MISSION-2.md перед стартом задачи 2.A.
+
+**Блокеры:** нет новых; см. запись №002.
+
 ## 2026-08-04 — Задание №003: Phase 0, задача 0.B, часть 1 (backend-core)
 
 **Блокер задания №002 закрыт:** согласно заданию №003, супервайзер прогнал `tools/check_v1_untouched.py --init` — PASS. Подтверждения самостоятельно в этой сессии не делал (см. вторую запись блокеров ниже про permission на выполнение).
@@ -55,3 +66,38 @@ $ python -m pytest tests/ -q
 **Дальше:** worker-connector (вторая половина 0.B) — jobs (lease/retry/cancel/resume) + outbox в `packages/platform`, `apps/worker` runner. Отдельный коммит.
 
 **Блокеры:** нет новых для продолжения 0.B. Permission-ограничение на explicit-path бинарники (см. отклонение выше) может повлиять на 0.D (CI gate wiring), если CI-раннер использует изолированный venv по пути — стоит проверить заранее.
+
+## 2026-08-04 — Черновики PLAN-MISSION-3..8 (Phase 3-8, все оставшиеся фазы)
+
+**Сделано (вне очереди, по прямому запросу владельца — «till last phase», продолжение черновика PLAN-MISSION-2):**
+- `docs/reports/PLAN-MISSION-3.md` — Phase 3 (Vendor synthetic sandbox): vendor domain schema, synthetic generator (16 сценариев из master plan §10.2, включая adverse cases), `VendorProvider` adapter contract, isolation тесты. FR-VND-01..09, NEG-04, D-TAX.
+- `docs/reports/PLAN-MISSION-4.md` — Phase 4 (Deterministic Decision Intelligence): decision_case, hard constraints → soft score, append-only human decisions, транзакционный финальный инвариант перед Bid (No-Go hard-stop, maker/checker), outcomes schema. FR-DEC-01..09, FR-AUT-01..06, INV-05/06/07, P005/P120, D-FIN (частично).
+- `docs/reports/PLAN-MISSION-5.md` — Phase 5 (АЛГОРИТМ Human+Rule builder): node schema, lifecycle (draft→...→active→retired), compiler/validator, simulation/backtest, ALG-RESEARCH gate (R1-R12) для financial policy. Явно: ML/Hybrid узлы существуют в модели, но не активируются до Phase 8. FR-ALG-01..23, INV-13/14, D-FIN.
+- `docs/reports/PLAN-MISSION-6.md` — Phase 6 (Controlled pilot/shadow production): единственная миссия, формально блокированная внешними решениями (D-HOST/D-IDP) уже на старте задачи 6.A, не только на qa-этапе. Gate 0-5 (Fast→Full→RC→Production auth→Post-deploy) впервые проходят end-to-end, shadow comparison с v1, observability/SLO/runbooks. NFR-REL-01..03, NFR-OPS-01/02, FR-MIG-03, D-HOST/D-IDP/D-PILOT/D-SLO.
+- `docs/reports/PLAN-MISSION-7.md` — Phase 7 (Real vendor onboarding): legal/privacy approval как блокирующий первый шаг (не техническая задача), real provider adapter (тот же контракт с Phase 3), tenant isolation, onboarding state machine. FR-VND-07..09, NFR-PRV-01..04, D-PII.
+- `docs/reports/PLAN-MISSION-8.md` — Phase 8 (ML advisory): единственная миссия без календарной оценки — зависит от накопленных Phase 4 outcomes/labels, не от расписания. Temporal holdout, shadow evaluation, model registry, human fallback, drift/override monitoring; ML остаётся advisory навсегда (INV-06/07/NEG-05 не снимаются этой фазой). FR-AUT-03, NEG-05, FR-ALG-08, D-ML.
+- Все шесть — ЧЕРНОВИКИ: каждый явно указывает свою зависимость (GO по предыдущей фазе) и не активируется автономно. Код не писался ни для одной из фаз 3-8.
+
+**Дальше:** ожидание последовательного прохождения Phase 0→1→2→...→8 с вердиктами супервайзера на каждой границе. Ревью PLAN-MISSION-3..8 супервайзером не срочно — требуется не раньше, чем закроется соответствующая предыдущая фаза (PLAN-MISSION-3 — после Phase 2 GO, и так далее).
+
+**Блокеры:** нет новых. Явно зафиксированные внешние блокеры по фазам: D-HOST/D-IDP (Phase 6 старт), D-PILOT (Phase 6.D), D-SLO (Phase 6.C числа), D-TAX (Phase 3/4 финальные коэффициенты), D-FIN (Phase 5 активация + частично Phase 4 scoring), D-PII (Phase 7 старт), D-ML (Phase 8 старт).
+
+## 2026-08-04 — Задание №003, часть 2: Phase 0, задача 0.B (worker-connector)
+
+**Блокер предыдущей части закрыт:** Docker Desktop, зависший во время работы над worker-connector (см. `_supervisor/run-003.log`), отвечает. Настоящая причина сбоя тестов в этой сессии — не сам Docker, а то, что Python `docker` SDK (используемый `testcontainers`) не находил `docker-credential-desktop` в `PATH` текущей shell-сессии; исправлено добавлением `Docker/Docker/resources/bin` в `PATH` для запуска тестов.
+
+**Сделано:**
+- `packages/platform/jobs.py` — durable worker jobs: `claim` (`SELECT ... FOR UPDATE SKIP LOCKED`), lease + heartbeat, checkpoint-based resume, retry с exponential backoff (`compute_backoff_seconds`), cancel, complete; идентичность job (job_type/params/source/range/contract_version/correlation_id) фиксируется при `enqueue` и не мутирует (FR-JOB-01..06, P002, P113, P116).
+- `packages/platform/outbox.py` — транзакционный outbox: `enqueue` пишет в транзакции вызывающего (строка существует тогда и только тогда, когда закоммичен и описываемый ею эффект), `Publisher.publish_pending` доставляет at-least-once, переход только `pending → published`, никогда в обратную сторону (FR-JOB-07).
+- `apps/worker/main.py` + `example_job.py` — воркер-луп: `run_once`/`run_forever` — claim → process (по страницам, с промежуточным checkpoint) → complete/fail_retry; correlation id привязывается на job из его собственной колонки, проставленной при enqueue (NFR-OBS-01).
+- Тесты: `tests/integration/test_jobs_store.py`, `test_outbox_transactional.py`, `test_correlation_propagation.py` — 18 новых интеграционных тестов (claim/lease/reclaim-after-lease-expiry/checkpoint-survives-crash/backoff-and-exhaustion/outbox-atomicity-with-rollback/publisher-idempotent-rerun/correlation-id-propagation-through-worker).
+
+**Вывод pytest (полный прогон, backend-core + worker-connector):**
+```
+$ python -m pytest tests/ -q
+75 passed in 50.32s
+```
+
+**Дальше:** задача 0.B (backend-core + worker-connector) закрыта в границах этого задания. Ожидание вердикта супервайзера на переход к 0.C (security review threat model) / 0.D (CI gates wiring, migration rehearsal, regression-стабы).
+
+**Блокеры:** нет новых.
