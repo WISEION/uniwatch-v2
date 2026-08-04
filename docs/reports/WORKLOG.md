@@ -141,3 +141,38 @@ $ python -m pytest tests/ -q
 **Дальше:** задача 0.D закрыта в границах этого задания — все пункты 0.D из `PLAN-MISSION-1.md` §2 выполнены. Phase 0 (Foundation) технически завершена: 0.A/0.B/0.C/0.D сделаны, Exit gate критерии (v1 untouched, migration rehearsal, worker restart, CI blocks invariant failure — через P007 тест, ADR+threat model, OpenAPI/idempotency/error format, Fast+Full gates реально запускаются) имеют доказательства в этом и предыдущих заданиях. Ожидание вердикта супервайзера по Exit gate Phase 0 перед стартом Phase 1 (`AGENTS.md` §4: "Phase N+1 не начинается без GO по Phase N").
 
 **Блокеры:** нет новых. Открытые (не блокирующие) пункты, зафиксированные честно, а не молча: T12 (correlation id injection, см. задание №004); P110/P221/P224/P225/P227-P229 и все RN-01..13 не имеют назначенной фазы ни в одном PLAN-MISSION документе (см. `tests/test_regression_registry.py`) — не блокер Phase 0/1, но нужно зафиксировать в будущем PLAN-MISSION при открытии соответствующего домена.
+
+## 2026-08-04 — Exit gate Phase 0: GO
+
+**Вердикт супервайзера/владельца:** GO по Exit gate Phase 0 (`_supervisor/task-004-phase1-worker-connector.md`). Основание — все критерии `PLAN-MISSION-1.md` §2 имеют доказательства из задания №005 (0.D): v1-untouched PASS, migration rehearsal + P007 quarantine test, worker restart-resume test, ADR (0001-0005) + threat model approved, OpenAPI/idempotency/error format зафиксированы в коде, Fast+Full CI gates реально запускаются (81 passed, 37 skipped). Открытые некритичные пункты (T12, нераспределённые P110/P221/P224/P225/P227-P229/RN-01..13) приняты как есть — не переоткрывают Phase 0.
+
+**Дальше:** Phase 1 открыта. Начало задачи 1.A (worker-connector: eTender empirical contract, raw→normalized versioning, identity_query_keys) — задание №004.
+
+**Блокеры:** нет новых.
+
+## 2026-08-04 — Задание №004: Phase 1, задача 1.A (worker-connector: eTender empirical contract)
+
+**Сделано:**
+- План `docs/superpowers/plans/2026-08-04-phase1-task1a-etender-connector.md` (writing-plans skill), выполнен инлайн в этой же сессии (без subagent-передачи — конвенция Phase 0).
+- **Реальный, живой захват фикстур** (по согласованию с владельцем — «Live capture now»), не синтетика: `fixtures/tender-snapshots/etender/` — `event_355920_details.raw.json` (`GET https://etender.gov.az/api/events/355920`) и `event_355920_bomlines_page1.raw.json` (`GET https://etender.gov.az/api/events/355920/bomLines?PageSize=100&PageNumber=1`), оба с checksum и манифестом провенанса (`MANIFEST.md`, DM-03). BOQ-захват подтвердил документированный факт дословно: `totalItems: 4135`, `totalPages: 42` (событие 355920, `uniwatch-v2-project.md`).
+- **Два расхождения с зафиксированными фактами найдены и НЕ замолчаны**, записаны в `docs/decisions/OPEN-QUESTIONS.md`: (1) реальный details-ответ содержит `organizationVoen` и `estimatedAmount` populated — по видимости противоречит "0/103, нет VÖEN/денег"; рабочая гипотеза (не подтверждена) — старый замер снят с list-ресурса, а не details; нужен ответ владельца, не блокирует Phase 1. (2) list-эндпоинт (`GET /api/events`) не поддался обратной разработке в рамках bounded-сессии (400 без деталей на все опробованные комбинации параметров) — не блокирует 1.A (нужен только для 1.B resumable pagination), явно передано как блокер для будущей задачи 1.B.
+- `packages/tender/source_contract.py` — `SourceContract`/`FieldSpec` + `canonical_identity()`: `identity_query_keys` фиксирует, какие параметры определяют идентичность записи контракта, так что общий URL-канонизатор не может её потерять (урок RN-06) — INT-02.
+- `packages/tender/schema_drift.py` — `detect_schema_drift()`: сравнение фактической формы ответа с замороженным контрактом (added/removed/type_changed fields); переход поля в `null` не считается дрейфом (вариация данных, не схемы) — FR-TND-10, INT-02.
+- `packages/tender/etender_contract.py` — два конкретных контракта (`EVENT_DETAILS_CONTRACT`, `BOM_LINES_PAGE_CONTRACT`), оба построены дословно по реальным захватам выше, не из документации (её нет) — INT-01.
+- `packages/tender/raw_snapshot.py` — immutable raw evidence: `save_raw_snapshot`/`get_raw_snapshot`, checksum = sha256 сырых байт; повторный fetch — всегда новая строка, приложение никогда не делает UPDATE по этой таблице — DM-02, DM-03.
+- `packages/tender/normalized.py` — версионированные normalized факты: `get_or_create_tender` (одна authoritative идентичность — DM-01) + `create_normalized_version` (новая immutable версия на каждый вызов, `tenders.current_version_id` — просто указатель, не вторая копия) — FR-TND-02, P108 (механизм; полное закрытие P108 остаётся Phase 2, см. `tests/test_regression_registry.py`).
+- `packages/tender/etender_connector.py` — `ingest_event_details()`: raw snapshot пишется безусловно ДО проверки дрейфа (свидетельство не зависит от того, понимает ли коннектор форму ответа); при дрейфе — `schema_drift_event` в существующий transactional outbox (0.B) + `SchemaDriftDetected` (сигнал для вызывающего, не абортит транзакцию хранения evidence); без дрейфа — normalized version. Нормализация берёт `eventType` из фактического payload, никогда из запрошенного фильтра — FR-TND-10.
+- `migrations/0003_tender_ingestion.sql` — `raw_snapshots`, `tenders`, `tender_versions`. `EXPECTED_SCHEMA_VERSION` (`packages/platform/settings.py`) и все тесты, хардкодившие версию схемы `2`, обновлены на `3` (`tests/integration/test_migrations_runner.py`, `tests/integration/test_health.py`) — реальное следствие FR-PLT-12, не баг.
+- Тесты: `tests/unit/test_source_contract.py`, `tests/unit/test_schema_drift.py`, `tests/unit/test_etender_contract_fixtures.py` (Fast — сверка контрактов с реальными фикстурами, без БД), `tests/integration/test_raw_snapshot.py`, `tests/integration/test_normalized_versioning.py`, `tests/integration/test_etender_connector.py` (Full — реальный Postgres через testcontainers).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+100 passed, 37 skipped in 48.97s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+110 files already formatted / All checks passed! / Success: no issues found in 35 source files / PASS: v1 untouched
+```
+
+**Дальше:** задача 1.A закрыта в границах этого задания — все три пункта `PLAN-MISSION-1.md` §3 1.A выполнены на реальных данных. 1.B (resumable pagination, BOQ completeness reconciliation), 1.C (security: egress validator реализация, SSRF suite), 1.D (exception queue) — НЕ начаты, отдельные задания. Ожидание вердикта супервайзера.
+
+**Блокеры:** нет новых для 1.A. Два открытых пункта для владельца/будущих задач зафиксированы в `docs/decisions/OPEN-QUESTIONS.md` (VÖEN/estimatedAmount на details-ресурсе; list-эндпоинт контракт не восстановлен — блокирует полный охват 1.B, не 1.A).
