@@ -1,6 +1,6 @@
 # PLAN-MISSION-5 — Phase 5: АЛГОРИТМ — Human + Rule builder
 
-**Статус:** ЧЕРНОВИК. Активируется только после GO супервайзера по Exit gate Phase 4 (PLAN-MISSION-4.md).
+**Статус:** ЧЕРНОВИК. **Открытый вопрос** (см. `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-04): `TENDER_INTELLIGENCE_SPEC.md` описывает Phase 4 «Decision Core» (§7.1, MDC) напрямую, без явного упоминания отдельной версионируемой АЛГОРИТМ-страницы (Human/Rule/ML/Gate builder) — залоченного решения из `docs/CONTEXT.md`. Не решено, поглощает ли Decision Core эту фазу или строится поверх неё — уточнить у владельца до старта Phase 5, этот файл пока не считается ни подтверждённым, ни вытесненным. Активируется только после GO супервайзера по Exit gate Phase 4 (PLAN-MISSION-4.md).
 **Дата:** 2026-08-04
 **Приоритет источников:** PRD v1.1 > master plan §12, §13, §17.5, §18 Phase 5 > v1 audit.
 **Зависимость:** Exit gate Phase 4 принят (decision engine, финальный инвариант, maker/checker доказаны).

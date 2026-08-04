@@ -79,3 +79,9 @@ D-PILOT, D-TAX, D-FIN, D-PII, D-SLO, D-ML block Phase 3+, out of Mission 1. `TBD
 - Threat model: `docs/architecture/threat-model.md`.
 - External standards/primary sources registry (S1-S14, e.g. OWASP SSRF for 1.C, UNECE UOM codes for
   Phase 3, WCAG 2.2 for Phase 2, NIST AI RMF for Phase 8): `docs/research/external-standards-and-sources.md`.
+- Plan of record for the rest of Phase 1 (1.C/1.D/1.E) and a restructured Phase 2-4
+  (DFE/SCG/EL/MDC subsystems, superseding `PLAN-MISSION-3/4/5.md`'s Vendor/Decision/Algorithm framing
+  for the phases it covers): `TENDER_INTELLIGENCE_SPEC.md` (project root). Its own `INV-15..20`/`P301-P319`
+  continue the PRD's `INV-01..14`/`P001-P229` scale without colliding — see
+  `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-04, for the full renumbering record and two owner
+  decisions (Phase 3 real-vendor-data timing, forecast-percentage provisionality).

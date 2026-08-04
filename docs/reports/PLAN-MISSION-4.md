@@ -1,6 +1,6 @@
 # PLAN-MISSION-4 — Phase 4: Deterministic Decision Intelligence
 
-**Статус:** ЧЕРНОВИК. Активируется только после GO супервайзера по Exit gate Phase 3 (PLAN-MISSION-3.md).
+**Статус:** ЧЕРНОВИК, **вероятно вытеснен** `TENDER_INTELLIGENCE_SPEC.md` §7 (Phase 4 — Execution Ledger + Decision Core + Calibration), см. `docs/decisions/OPEN-QUESTIONS.md` (2026-08-04). Не удалён — не активируется до явного сравнения с новым документом на старте Phase 4. Активируется только после GO супервайзера по Exit gate Phase 3 (PLAN-MISSION-3.md).
 **Дата:** 2026-08-04
 **Приоритет источников:** PRD v1.1 > master plan §11, §17.4, §18 Phase 4 > v1 audit.
 **Зависимость:** Exit gate Phase 3 принят (два fake vendor provider, synthetic isolation доказана).

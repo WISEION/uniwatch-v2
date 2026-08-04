@@ -77,3 +77,52 @@ itself can be empty (unfiltered) or a specific code; the connector must still va
 
 **Owner follow-up needed:** No further action needed to start 1.B — the query contract above is ready to
 use. 1.B itself (resumable pagination implementation) has not started; this only removes its blocker.
+
+## 2026-08-04 — TENDER_INTELLIGENCE_SPEC.md integrated: ID renumbering + Phase 3 vendor-gate deviation + forecast percentages flagged provisional
+
+**Context:** Owner supplied `TENDER_INTELLIGENCE_SPEC.md` (project root) as the continuation spec for
+the rest of Phase 1 plus a restructured Phase 2-4 (DFE/SCG/EL/MDC subsystems), right after 1.A/1.B
+closed and before starting 1.C.
+
+**Deviation/assumption 1 — ID renumbering (mechanical, not a content decision):** The document's own
+draft numbering (`INV-1..10`, `P011-P054`) collided with the PRD's existing `INV-01..14`/`P001-P229`
+scale on the same numbers with different meanings (draft `INV-6`=egress/SSRF vs PRD's actual
+`INV-10`=egress/SSRF; draft `INV-8`=decision-not-recommendation vs PRD's actual `INV-07`=same
+concept; three of the draft's ten invariants turned out to be verbatim restatements of existing PRD
+invariants under different numbers). Resolved in-place, per owner instruction ("не трогай нашу
+нумерацию, переделай его"): the file was edited directly — restated invariants now cite the existing
+PRD ID instead of minting a duplicate; genuinely new invariants continue the PRD's own scale from
+`INV-15`; all proofs (none of which are from the original 29-item v1 audit) moved to a new `P301-P319`
+block so they never collide with `P001-P229`. PRD's own `INV-01..14`/`P001-P229` were not touched or
+renumbered.
+
+**Deviation/assumption 2 — Phase 3 real vendor data, not synthetic-first:** The original
+`UNIWatch-v2-master-development-plan-2026-07-28.md` puts *real* vendor data ingestion at Phase 7, only
+after a dedicated legal/privacy/security gate — Phase 3 there is synthetic-only (`FR-VND-06`,
+`docs/adr/0004-synthetic-real-isolation.md`). `TENDER_INTELLIGENCE_SPEC.md` §6.1 moves real supply-side
+ingestion (photos/voice/ERP pulls from real vendors' own folders) into Phase 3. **Owner decision,
+recorded, not assumed by the agent:** Unico QSC has 20 years of existing, known vendor relationships —
+this is not a cold-start "will we find suppliers" question, so the separate external legal-gate
+sequencing built for *unknown* vendors doesn't apply the same way to ingesting data about vendors the
+company already works with. Basic data-hygiene concerns (PII of individual contacts in voice
+notes/photos, retention, access control) still apply as ordinary internal practice, just not as a
+blocking standalone v2 gate. Recorded in `TENDER_INTELLIGENCE_SPEC.md` §6 itself as a visible banner,
+not silently dropped.
+
+**Deviation/assumption 3 — Forecast engine percentages (§5.3) are illustrative, not calibrated:** The
+draft stated specific confidence tiers (≈30%/60%/85%) as if already decided. Flagged and edited in
+place as `TBD-TIS-02` (same treatment as the PRD's own `TBD-03`, ML minimum labels/uplift/calibration)
+— the tier *structure* (three levels by number of converging signals) is a real design choice, the
+exact percentages are not settled until the retro-sample backtest (`P310`) runs for real.
+
+**Not yet resolved / worth a closer look before Phase 5 starts:** the new document's Phase 4 "Decision
+Core" (§7.1, MDC) implements Go/No-Go and Bid/No-Bid decision logic directly, without an obvious
+equivalent of the original master-plan's dedicated Phase 5 "АЛГОРИТМ" page (a separate versionable
+policy-graph builder with Human/Rule/ML/Gate node types — a decision already locked in
+`docs/CONTEXT.md`'s "Locked decisions"). Whether Decision Core is meant to sit *on top of* a future
+АЛГОРИТМ builder, or replace the need for one, is not addressed in the new document and hasn't been
+asked of the owner yet — noting it here rather than assuming either answer. Does not block Phase 1's
+remaining tasks (1.C/1.D/1.E).
+
+**Owner follow-up needed:** No further action needed to continue 1.C. The АЛГОРИТМ-builder question
+above should be raised before Phase 5 planning starts.
