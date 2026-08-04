@@ -77,3 +77,5 @@ D-PILOT, D-TAX, D-FIN, D-PII, D-SLO, D-ML block Phase 3+, out of Mission 1. `TBD
 - Deviations/new assumptions: `docs/decisions/OPEN-QUESTIONS.md`.
 - ADRs: `docs/adr/`.
 - Threat model: `docs/architecture/threat-model.md`.
+- External standards/primary sources registry (S1-S14, e.g. OWASP SSRF for 1.C, UNECE UOM codes for
+  Phase 3, WCAG 2.2 for Phase 2, NIST AI RMF for Phase 8): `docs/research/external-standards-and-sources.md`.
