@@ -232,3 +232,28 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** задача 1.B закрыта в границах этого задания — все три пункта `PLAN-MISSION-1.md` §3 1.B выполнены и доказаны на реальных данных. Живое HTTP-получение страниц (egress-validated) намеренно не реализовано здесь — ждёт 1.C. 1.C (security: реализация egress validator, SSRF suite) и 1.D (exception queue) — не начаты, отдельные задания. Ожидание вердикта супервайзера.
 
 **Блокеры:** нет новых.
+
+## 2026-08-05 — Задание №006: Phase 1, задача 1.C (security: egress validator + SSRF suite)
+
+**Сделано:**
+- Рефакторинг: общие DB-фикстуры (`postgres_container`/`engine`/...) подняты из `tests/integration/conftest.py` в `tests/conftest.py`, чтобы `tests/security/` (и будущие `tests/contract`, `tests/state`) тоже могли ими пользоваться — механический, поведение не менялось (прогон подтверждён до и после).
+- `migrations/0005_trusted_sources.sql` + `packages/platform/egress/registry.py` — trusted source registry: `register_source` (всегда `pending_scan`, никогда `trusted` при создании), `promote_to_trusted` (требует `scanner_run_reference` — реальный прогон сканера, не структурная проверка), `revoke_source` (append-only, строка не удаляется) — NFR-SEC-03, threat model T2.
+- `packages/platform/egress/validator.py` — `EgressValidator.validate()`: scheme check → registry check (только `trusted`) → resolve (**все** адреса, не только первый) → IP-range check → пиннинг первого резолвленного IP. `is_blocked_ip()` — loopback/private/link-local (включая метадату `169.254.169.254`)/multicast/reserved/unspecified через `ipaddress` + явно CGNAT (`100.64.0.0/10`) и NAT64 (`64:ff9b::/96`), которые `ipaddress.is_private` не всегда ловит. IPv4-mapped IPv6 (`::ffff:x.x.x.x`) корректно разворачивается модулем `ipaddress` автоматически — проверено тестом. Каждый отказ — `EgressRejected(reason, detail)`, никогда молчаливый `None` — NFR-SEC-01, NFR-SEC-02, INV-10, P006.
+- `packages/platform/egress/fetch.py` — `fetch_via_validator()`: ручной redirect-loop (никогда `follow_redirects` HTTP-клиента) — каждый hop валидируется с нуля. Реальное TCP-соединение пиннится к проверенному IP через `_PinnedHTTPSConnection`/`_PinnedHTTPConnection` (подкласс `http.client`, переопределён только `connect()` — TLS SNI и `Host`-заголовок остаются на оригинальном hostname). `do_fetch` — инъекция для тестируемости redirect-логики без реальной сети.
+- Тесты:
+  - `tests/unit/test_egress_ip_blocking.py` — 22 case (18 заблокированных классов адресов + 4 публичных), pure logic, Fast gate.
+  - `tests/security/test_trusted_source_registry.py` — 4 теста (не trusted при регистрации, trusted после promote, revoked не trusted и не удалён, незарегистрированный хост не trusted).
+  - `tests/security/test_egress_validator.py` — 7 тестов (scheme/registry/multi-address/DNS-failure).
+  - `tests/security/test_ssrf_suite.py` — **P301** (metadata + приватный IP заблокированы, причина конкретная), **P302** (redirect на приватный IP заблокирован на шаге redirect, включая цепочку из 3 хопов — третий никогда не фетчится), **P303** (DNS-rebinding: резолвер вызывается один раз на `validate()`, соединение использует первый адрес, повторный "ребайнд"-ответ резолвера никогда не достигает уже провалидированного target), **P304** (реальный живой запрос к `etender.gov.az/api/events/355920` через полный validate+pinned-connect конвейер — `200`, тело совпадает с реальным захватом задания №004) + regression на бесконечный redirect-loop.
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests/ -q
+154 passed, 37 skipped in 48.85s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+127 files already formatted / All checks passed! / Success: no issues found in 41 source files / PASS: v1 untouched
+```
+
+**Дальше:** задача 1.C закрыта — `docs/architecture/egress-validator-contract.md` реализован полностью, P301-P304 (нумерация `TENDER_INTELLIGENCE_SPEC.md`) зелёные, включая реальный сетевой прогон против живого источника. Defense-in-depth сетевого уровня (network policy, `D-HOST`) — не в этой задаче, блокировано открытым решением владельца. 1.D (exception queue) — не начата, отдельное задание.
+
+**Блокеры:** нет новых.

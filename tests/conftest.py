@@ -10,7 +10,7 @@ from testcontainers.postgres import PostgresContainer
 from packages.platform.db import get_engine, get_sessionmaker
 from packages.platform.migrations_runner import MigrationRunner
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 
 @pytest.fixture(scope="session")
