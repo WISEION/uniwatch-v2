@@ -46,7 +46,7 @@ uvicorn apps.api.main:app --reload
 python -m apps.worker.main
 ```
 
-`DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`; both have dev defaults. There is no linter/formatter/type-checker wired in yet (Phase 0 task 0.D) — don't assume `ruff`/`mypy`/`black` exist until then.
+`DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`; both have dev defaults. `ruff` (lint+format) and `mypy` are wired in (`pyproject.toml`).
 
 ## Architecture
 
@@ -65,7 +65,7 @@ apps/worker           separate process for anything long-running: ingestion, BOQ
                       reconciliation, outbox consumers — never inside an apps/api request handler
 ```
 
-Enforced import direction: `packages/tender` never imports `packages/vendor` internals (or vice versa) directly — only through `packages/contracts`. Same rule applies across all domain packages. See `docs/adr/0001-modular-monolith-boundaries.md`.
+Enforced import direction and domain boundaries: see `AGENTS.md` §3 and `docs/adr/0001-modular-monolith-boundaries.md` (this file already defers to `AGENTS.md` as normative, per "Read this first" above).
 
 **Four-layer data model** (`docs/adr/0003-data-authority-and-provenance.md`) — every significant record moves through these layers, and a lower layer never overwrites a higher one:
 
@@ -91,4 +91,4 @@ Layer 3 never writes itself as layer 4. Records also carry `data_origin` (`real`
 
 ## Working within phases
 
-Work proceeds in sequential phases (Phase 0 → 1 → 2 → ...) per `docs/reports/PLAN-MISSION-1.md`; phases don't overlap, and a phase doesn't start before the supervisor issues GO on the previous phase's exit report. `docs/reports/PLAN-MISSION-{2..8}.md` are drafts for future phases only — not active work. Log session progress by appending to `docs/reports/WORKLOG.md` (never rewrite history); record any deviation from the plan or new assumption in `docs/decisions/OPEN-QUESTIONS.md` rather than deciding it silently. New boundary/stack/data-authority decisions get a new sequential ADR under `docs/adr/` (never renumbered or deleted).
+Phase/gate discipline, WORKLOG/OPEN-QUESTIONS/ADR conventions: see `AGENTS.md` §4. Plan of record: `docs/reports/PLAN-MISSION-1.md` (Phase 0/1, active); `PLAN-MISSION-{2..8}.md` are drafts for later phases, not active work.
