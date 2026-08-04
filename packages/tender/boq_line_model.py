@@ -15,6 +15,7 @@ an unresolved unit rather than silently trusting a wrong canonicalization
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 _UNIT_CANONICAL_MAP: dict[str, str] = {
@@ -42,3 +43,26 @@ def canonicalize_unit(raw_unit: str) -> CanonicalUnit:
     canonical = _UNIT_CANONICAL_MAP.get(raw_unit)
     status = "mapped" if canonical is not None else "unmapped"
     return CanonicalUnit(raw=raw_unit, canonical=canonical, status=status)
+
+
+# Keyword sets are deliberately English-only, matching the exact terms
+# TENDER_INTELLIGENCE_SPEC.md §5.1 names ("preliminaries", "provisional
+# sums", "prime cost"). No Azerbaijani/Russian equivalents are guessed at
+# here -- none are supplied by any source document, and inventing a
+# translation would be exactly the kind of unsourced fact AGENTS.md hard
+# ban #2 forbids. See docs/decisions/OPEN-QUESTIONS.md (2026-08-05, task
+# 2.A entry) for the resulting open question to the owner.
+_PRELIMINARIES_RE = re.compile(r"\bpreliminar(?:y|ies)\b", re.IGNORECASE)
+_PROVISIONAL_SUM_RE = re.compile(r"\bprovisional\s+sums?\b", re.IGNORECASE)
+_PRIME_COST_RE = re.compile(r"\bprime\s+cost\b|\bPC\s+sum\b", re.IGNORECASE)
+
+
+def classify_line_type(name: str, description: str) -> str:
+    text = f"{name} {description}"
+    if _PRELIMINARIES_RE.search(text):
+        return "preliminaries"
+    if _PROVISIONAL_SUM_RE.search(text):
+        return "provisional_sum"
+    if _PRIME_COST_RE.search(text):
+        return "prime_cost"
+    return "normal"
