@@ -9,6 +9,13 @@ discovery session the same day (events-list query contract).
 | `event_355920_details.raw.json` | GET | `https://etender.gov.az/api/events/355920` | 2026-08-04T12:21:32Z | 200 | `dabd9dc504c630e77d577dccdfed36e05796ceabbcbd66f98fd6c51af7c85b80` |
 | `event_355920_bomlines_page1.raw.json` | GET | `https://etender.gov.az/api/events/355920/bomLines?PageSize=100&PageNumber=1` | 2026-08-04T12:21:32Z | 200 | `bb0c308425394fe1a26af1c9e6f4677c8ffa05f128dcb01cba5681941a0625d4` |
 | `events_list_page1.raw.json` | GET | `https://etender.gov.az/api/events?EventType=&PageSize=6&PageNumber=1&EventStatus=1&Keyword=&buyerOrganizationName=&documentNumber=&publishDateFrom=&publishDateTo=&AwardedparticipantName=&AwardedparticipantVoen=&DocumentViewType=&IsArchived=false` | 2026-08-04T~13:05Z | 200 | `b6a5d6f2080ffa5170ac7b53bbe9f4c51eec76733a236ef97fe2518c720b2f63` |
+| `event_355920_bomlines_page2.raw.json` | GET | `https://etender.gov.az/api/events/355920/bomLines?PageSize=100&PageNumber=2` | 2026-08-04T~14:00Z | 200 | `b87231b2ea420c3a250fc271709599c08244c9d17bccf7e381324301199f1614` |
+| `event_355920_bomlines_page3.raw.json` | GET | `https://etender.gov.az/api/events/355920/bomLines?PageSize=100&PageNumber=3` | 2026-08-04T~14:00Z | 200 | `b1a601742c6bb93c2d7b15889d72c682dcf5908dd7b739127487c54f269a0f73` |
+
+Pages 2/3 captured for task **1.B** (resumable pagination) — real, distinct pages of the same known
+4135-line/42-page BOQ (page 2 starts at line id `5131548`, page 3 at `5131648`; page 1 started at
+`5131448`), so a "resume after page-2 failure, don't skip to page 3" test can use genuinely different
+real page content, not a duplicated or fabricated page.
 
 Files are the exact raw response bytes, unmodified — this is layer-1 raw evidence
 (`docs/adr/0003-data-authority-and-provenance.md`). Do not hand-edit them; a re-capture creates a new

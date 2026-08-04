@@ -208,3 +208,27 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** все три реально захваченных eTender-ресурса (event details, BOM-страница, events-list-страница) теперь проходят один и тот же raw→drift→normalized конвейер и покрыты тестами на реальных данных. Resumable pagination, BOQ page/row reconciliation, filter-aware identity для events-list — остаются задачей 1.B, не начаты.
 
 **Блокеры:** нет.
+
+## 2026-08-04 — Задание №005: Phase 1, задача 1.B (resumable pagination + BOQ completeness)
+
+**Сделано:**
+- Дополнительный реальный захват: страницы 2 и 3 BOM-строк события 355920 (`event_355920_bomlines_page{2,3}.raw.json`, checksum в `MANIFEST.md`) — для честного теста «сбой на странице 2 → повтор страницы 2, не страницы 3» на реально различном содержимом (page1 начинается с id 5131448, page2 — 5131548, page3 — 5131648).
+- `migrations/0004_boq_import.sql` — таблица `boq_import` (expected_total, expected_pages, fetched_pages, stored_lines, status, missing_pages, page_checksums per page). `EXPECTED_SCHEMA_VERSION` и все тесты, хардкодившие версию схемы, обновлены с 3 на 4.
+- `packages/tender/boq_completeness.py` — `record_page_fetched()` (реконсиляция: `complete` только когда fetched_pages==expected_pages И stored_lines==expected_total; `source_exhausted_unverified`, если источник не сообщил total; иначе `in_progress`) и `mark_import_stalled()` (при остановке job до completeness — статус `incomplete` с точным списком недостающих страниц, никогда молча) — FR-DQ-01, FR-DQ-02, FR-TND-04, INV-04, P001.
+- `packages/tender/bom_lines_job.py` — `process_bom_lines_page()`: обрабатывает ровно одну страницу, возобновляясь с `job.checkpoint["next_page"]`; `fetch_page` — внешняя зависимость (инъекция), намеренно НЕ реальный HTTP-вызов — реальная сеть подключается только когда будет готов egress validator задачи 1.C, чтобы невалидированный live-запрос не оказался спрятан внутри этого механизма. Raw snapshot и normalized version коммитятся до обновления checkpoint — при исключении (сбой fetch или schema drift) checkpoint НЕ продвигается, ретрай повторяет ту же страницу — INV-03, FR-JOB-04/05, P002. Новый job (другой `params`/`correlation_id`) получает свежий `checkpoint={}`, cursor не наследуется — FR-JOB-06.
+- Тесты на реальных данных (3 настоящие страницы, не выдуманные):
+  - `tests/integration/test_boq_completeness.py` — накопление счётчиков по 3 реальным страницам (300 строк, `in_progress`, т.к. 3 ≠ 42 реальных страниц — честно, не подделано); отдельно — `complete` и `source_exhausted_unverified` через прямые вызовы reconciliation-примитива с явно тестовыми (не настоящими event 355920) числами; `incomplete` с точным списком недостающих страниц.
+  - `tests/integration/test_bom_lines_pagination.py` — P002 acceptance: инъекция сбоя на странице 2 (`ConnectionError`) → checkpoint остаётся на 2, не перескакивает на 3; ретрай успешен на реальном содержимом страницы 2; страница 3 запрошена следующей (`attempts == [1, 2, 2, 3]`) — без дублей и пропусков. FR-JOB-06: новый job identity получает `checkpoint == {}` независимо от прогресса другого job на том же event_id.
+  - `tests/integration/test_subresource_status_independence.py` — FR-TND-07/P109: сбой ingestion BOQ (synthetic drift) не влияет на уже успешно нормализованные details того же тендера; и наоборот — успешный BOQ ingest не требует и не создаёт details-ресурс. Ни одного случая, где ошибка одного субресурса маскируется успехом другого.
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests/ -q
+114 passed, 37 skipped in 105.71s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+117 files already formatted / All checks passed! / Success: no issues found in 37 source files / PASS: v1 untouched
+```
+
+**Дальше:** задача 1.B закрыта в границах этого задания — все три пункта `PLAN-MISSION-1.md` §3 1.B выполнены и доказаны на реальных данных. Живое HTTP-получение страниц (egress-validated) намеренно не реализовано здесь — ждёт 1.C. 1.C (security: реализация egress validator, SSRF suite) и 1.D (exception queue) — не начаты, отдельные задания. Ожидание вердикта супервайзера.
+
+**Блокеры:** нет новых.
