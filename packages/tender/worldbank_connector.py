@@ -8,11 +8,14 @@ project, not a single versioned entity."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.platform import outbox
+from packages.platform.egress.fetch import fetch_via_validator
+from packages.platform.egress.validator import EgressValidator
 
 from .raw_snapshot import save_raw_snapshot
 from .schema_drift import SchemaDriftDetected, detect_schema_drift, detect_schema_drift_over_items
@@ -74,3 +77,22 @@ async def ingest_donor_pipeline_page(
         )
         signal_ids.append(await store_signal(conn, signal))
     return signal_ids
+
+
+class UnexpectedResponseStatus(Exception):
+    pass
+
+
+async def fetch_donor_pipeline_page_live(
+    conn: AsyncConnection,
+    validator: EgressValidator,
+    *,
+    countrycode_exact: str,
+    rows: int,
+    os_: int,
+) -> tuple[bytes, dict[str, Any]]:
+    url = f"https://search.worldbank.org/api/v2/projects?format=json&countrycode_exact={countrycode_exact}&rows={rows}&os={os_}"
+    status, body, _headers = await fetch_via_validator(conn, validator, url)
+    if status != 200:
+        raise UnexpectedResponseStatus(f"World Bank Projects API returned HTTP {status} for {url!r}")
+    return body, json.loads(body)
