@@ -465,3 +465,32 @@ publication-window estimate — neither exists yet.
 **Owner follow-up needed:** Yes, non-blocking. `TBD-TIS-01`/`TBD-TIS-02` still need the owner's
 research/approval gate before real probabilities/tiers/windows can replace the `is_composite` proxy;
 weekly digest/alert delivery remains a separate, unscoped future task.
+
+## 2026-08-06 — Task 3.A: vendor synthetic sandbox — first slice only (1 provider, 2/7 adverse cases)
+
+**Context:** `TENDER_INTELLIGENCE_SPEC.md` §6.1 / PRD `FR-VND-01..06,09` specify the full vendor
+synthetic sandbox: at least 2 providers, all 7 adverse cases (stale offer, mixed UOM, MOQ conflict,
+currency/VAT mismatch, capacity shortfall, expiring evidence, partial fulfillment), and tenant isolation
+tests at route/service/database levels. Task 3.A
+(`docs/superpowers/plans/2026-08-06-phase3-task3a-vendor-synthetic-sandbox.md`) built one provider
+(`SyntheticProvider`), 2 adverse cases (`stale_offer`, `moq_conflict`), and database-level isolation only.
+
+**Deviation/assumption:** No real vendor inputs (photos, voice notes, ERP/folder access) exist in this
+session, so `FR-VND-01`'s actual "napkin ingestion" (OCR/ASR pipeline over real Unico supplier
+artifacts) could not start — the owner chose to build the synthetic-sandbox engine first instead,
+explicitly allowed to run before/parallel to real ingestion per `TENDER_INTELLIGENCE_SPEC.md` §6's own
+text. Scope was further trimmed to a first slice (1 provider, 2 adverse cases, DB-only isolation) rather
+than the full `FR-VND-01..06,09` bar, matching this project's established incremental-slice discipline
+(same treatment task 2.C gave weak/medium/strong tiers).
+
+**Consequence that must not be silently dropped:** `SyntheticProvider` alone does not satisfy
+`FR-VND-04`'s "minimum two providers" phase-level requirement — a second provider (e.g. CSV) is real,
+unbuilt future work. The 5 un-covered adverse cases (mixed UOM, currency/VAT mismatch, capacity
+shortfall, expiring evidence, partial fulfillment) are real gaps, not silently assumed handled — any
+future SCG/matching code (task 3.D) must not assume full adverse-case coverage exists yet.
+Route/service-level tenant isolation (`FR-VND-09`) remains unbuilt until a real vendor HTTP API exists
+beyond `apps/api_vendor`'s existing `/internal/ping` proof endpoint (ADR-0006).
+
+**Owner follow-up needed:** No, not blocking — the trimmed scope was the owner's own choice. Real
+vendor inputs and the OCR/ASR tooling choice for actual napkin ingestion, the second provider, the
+remaining adverse cases, and route-level isolation are all open future work, not urgent.

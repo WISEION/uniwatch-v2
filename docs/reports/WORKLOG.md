@@ -583,3 +583,51 @@ publication window, and Next Best Action remain blocked on `TBD-TIS-01`/`TBD-TIS
 
 **Блокеры:** нет новых. Non-blocking: `TBD-TIS-01`/`TBD-TIS-02` still need the owner's research/approval
 gate before real probabilities/tiers/windows can replace the `is_composite` proxy this task uses.
+
+## 2026-08-06 — Phase 3, task 3.A (vendor): synthetic sandbox — first slice
+
+**Сделано:**
+- Plan `docs/superpowers/plans/2026-08-06-phase3-task3a-vendor-synthetic-sandbox.md` (writing-plans
+  skill), executed inline. Owner chose Phase 3 (Vendor/SCG) over widening Phase 2 signal coverage; no
+  real vendor inputs (photos/voice/ERP folders) available in this session, so the synthetic-sandbox
+  engine (`TENDER_INTELLIGENCE_SPEC.md` §6's own text explicitly allows this to be built
+  before/parallel to real ingestion) was built first, deliberately trimmed to a first slice: 1 provider
+  (not `FR-VND-04`'s phase-level minimum of 2), 2 of `FR-VND-03`'s 7 adverse cases.
+- First real code in `packages/vendor` (previously empty): `vendor_model.py` (pure `Vendor`/`Offer`,
+  `FR-VND-05`'s full field set — price/currency/VAT/UOM+conversion/MOQ/capacity/inventory/validity/
+  evidence), `provider_contract.py` (`FR-VND-04`'s one-adapter-interface `SupplyProvider` Protocol),
+  `synthetic_provider.py` (deterministic generator — same `(seed, as_of)` always produces identical
+  output, no ambient `datetime.now()`/`random` — covering `stale_offer` and `moq_conflict`),
+  `vendor_store.py` (persistence). `migrations/0009_vendor_sandbox.sql` — `vendors`/`vendor_offers`,
+  with `data_realm`/`watermark` **DB-CHECK-enforced pairing from this table's first migration**
+  (`ADR-0004`'s own requirement) — proven with a real test that a mismatched insert is rejected by the
+  database itself, not just application code (`FR-VND-06`).
+- **Real, necessary side-effect fix, not part of the plan's original scope:** migration 0009 moves the
+  real schema ledger version from 8 to 9 — this broke 6 existing tests that hardcoded
+  `expected_schema_version=8`/`current_version() == 8` (`tests/integration/test_api_tender_health.py`,
+  `test_api_vendor_health.py`, `test_migrations_runner.py` ×4) plus
+  `packages/platform/settings.py`'s own `EXPECTED_SCHEMA_VERSION` env-var default (would have caused a
+  real dev-environment readiness mismatch, not just a test failure) and
+  `tests/contract/test_tender_vendor_contract.py` (inert there, updated for consistency). All updated
+  to 9.
+- Tests: `tests/unit/test_vendor_model.py` (2), `tests/unit/test_provider_contract.py` (1),
+  `tests/unit/test_synthetic_provider.py` (6), `tests/integration/test_vendor_sandbox_migration.py` (2),
+  `tests/integration/test_vendor_store.py` (2).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+278 passed, 33 skipped in 216.35s (0:03:36)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+205 files already formatted / All checks passed! / Success: no issues found in 66 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** Phase 3's synthetic-sandbox engine has a real, proven foundation, but is deliberately
+partial — `FR-VND-04`'s second provider (e.g. CSV), the other 5 adverse cases, and route/service-level
+tenant isolation (`FR-VND-09`, no vendor HTTP API beyond `apps/api_vendor`'s `/internal/ping` proof
+endpoint exists yet) all remain open, recorded in `docs/decisions/OPEN-QUESTIONS.md`. The actual "napkin
+ingestion" (`FR-VND-01`'s real photos/voice/ERP-folder pipeline, OCR/ASR tech choice) still needs real
+vendor inputs the owner hasn't supplied in this session.
+
+**Блокеры:** нет новых. Non-blocking: real vendor artifacts (for napkin ingestion) and OCR/ASR tooling
+choice remain owner-dependent whenever that work starts.
