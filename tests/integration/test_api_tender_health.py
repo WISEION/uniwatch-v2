@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest_asyncio
 
-from apps.api.main import create_app
+from apps.api_tender.main import create_app
 from packages.platform.settings import Settings
 
 

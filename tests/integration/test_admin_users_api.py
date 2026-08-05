@@ -9,7 +9,7 @@ import httpx
 import pytest_asyncio
 from sqlalchemy import text
 
-from apps.api.main import create_app
+from apps.api_tender.main import create_app
 from packages.platform.settings import Settings
 
 ADMIN_PERMISSIONS = (
