@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .forecast_card import ForecastCard, build_forecast_card
 from .object_intersection import ObjectIntersection, detect_intersection
 from .signal_model import Signal
 
@@ -116,3 +117,12 @@ async def detect_object_region_intersection(conn: AsyncConnection, *, object_reg
     both remain blocked on TBD-TIS-02/TBD-TIS-01 (see OPEN-QUESTIONS.md)."""
     rows = await list_signals_by_object_region(conn, object_region=object_region)
     return detect_intersection(object_region, rows)
+
+
+async def build_object_region_forecast_card(conn: AsyncConnection, *, object_region: str) -> ForecastCard | None:
+    """TENDER_INTELLIGENCE_SPEC.md §5.4 / P311: assembles a forecast card's
+    real evidence chain for one object, gated on the same is_composite
+    fact detect_object_region_intersection already proves -- see
+    forecast_card.py's own docstring for what is and isn't built here."""
+    rows = await list_signals_by_object_region(conn, object_region=object_region)
+    return build_forecast_card(object_region, rows)
