@@ -296,3 +296,21 @@ async def fetch_design_tender_page_live(
     if status != 200:
         raise UnexpectedResponseStatus(f"eTender events search returned HTTP {status} for {url!r}")
     return body, json.loads(body)
+
+
+async def fetch_procurement_plan_page_live(
+    conn: AsyncConnection,
+    validator: EgressValidator,
+    *,
+    year: int,
+    page_number: int,
+    buyer_organization_name: str = "",
+) -> tuple[bytes, dict[str, Any]]:
+    params: dict[str, Any] = {"PageSize": 10, "PageNumber": page_number, "Year": year}
+    if buyer_organization_name:
+        params["BuyerOrganizationName"] = buyer_organization_name
+    url = f"https://etender.gov.az/api/app?{urlencode(params)}"
+    status, body, _headers = await fetch_via_validator(conn, validator, url)
+    if status != 200:
+        raise UnexpectedResponseStatus(f"eTender app-list search returned HTTP {status} for {url!r}")
+    return body, json.loads(body)
