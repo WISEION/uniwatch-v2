@@ -13,6 +13,8 @@ discovery session the same day (events-list query contract).
 | `event_355920_bomlines_page3.raw.json` | GET | `https://etender.gov.az/api/events/355920/bomLines?PageSize=100&PageNumber=3` | 2026-08-04T~14:00Z | 200 | `b1a601742c6bb93c2d7b15889d72c682dcf5908dd7b739127487c54f269a0f73` |
 | `design_tender_search_page1.raw.json` | GET | `https://etender.gov.az/api/events?EventType=&PageSize=10&PageNumber=1&EventStatus=1&Keyword=layih%C9%99&buyerOrganizationName=&documentNumber=&publishDateFrom=&publishDateTo=&AwardedparticipantName=&AwardedparticipantVoen=&DocumentViewType=&IsArchived=false` | 2026-08-05 | 200 | `ea88088034078a47c0627cb775199310dec6b16eb03faa284a80c6dc51424ed0` |
 | `design_tender_search_page2.raw.json` | GET | same URL with `PageNumber=2` | 2026-08-05 | 200 | `0e19ec745c0c9a467668bd6d5b5d6d104801b84bcc08fb16bda1b0cbd3796bcd` |
+| `app_list_page1_2026.raw.json` | GET | `https://etender.gov.az/api/app?PageSize=10&PageNumber=1&Year=2026` | 2026-08-05 | 200 | `69c0f81782bacb16ecf88ccccc80355fe68f3bfcab27df835fdc487ff1f93b04` |
+| `app_list_zaqatala_2026.raw.json` | GET | `https://etender.gov.az/api/app?PageSize=10&PageNumber=1&Year=2026&BuyerOrganizationName=ZAQATALA` | 2026-08-05 | 200 | `79ccbc0b0a0708ca9167e8f59c22717bc48259d8c8cf55d8d12b0ea80c306b00` |
 
 Pages 2/3 captured for task **1.B** (resumable pagination) — real, distinct pages of the same known
 4135-line/42-page BOQ (page 2 starts at line id `5131548`, page 3 at `5131648`; page 1 started at
@@ -58,6 +60,24 @@ dated file, never an edit of these.
   "Layihə-Konstruktor" ("Design-Construction..."), unrelated to the tender's actual subject (evacuation
   services). This is the real precision boundary the classifier in `packages/tender/design_tender_signal.py`
   is built against.
+
+- `app_list_page1_2026.raw.json` / `app_list_zaqatala_2026.raw.json` (task 2.B, procurement-plan signal
+  slice, third signal source): real API discovered by static analysis of eTender's Angular bundle
+  (`main.f5154a38aaa91629.js` — the frontend component literally named `app-purchase-plans`,
+  `getData` calling `this.apiService.get('/app?PageSize=...&PageNumber=...&Year=...')`), not a live
+  browser trace this time. `GET /api/app?...&Year=2026` alone returns `totalItems: 1413` across
+  `totalPages: 142` (`PageSize=10`) — every Azerbaijan government body's 2026 procurement-plan
+  submission. `GET /api/app/years` (live-verified) lists valid years `2019`-`2027` — 2027 already has
+  real planning data. `&BuyerOrganizationName=ZAQATALA` narrows to `totalItems: 33`, all real Zaqatala-
+  region organizations (e.g. `ZAQATALA RAYON GİGİYENA VƏ EPİDEMİOLOGİYA MƏRKƏZİ`). **This is the real
+  cross-category object overlap the World Bank↔eTender check (2026-08-05, see OPEN-QUESTIONS.md) did
+  not find**: these organizations canonicalize to the same `object_region = "Zaqatala"` as the
+  already-captured `design_tender_search_page1.raw.json`'s `ZAQATALA RAYONU İCRA HAKİMİYYƏTİ` signals,
+  even though the exact organizations differ. Two more real, confirmed-working endpoints were found but
+  are **not** consumed by this fixture pair: `GET /api/app/{id}/versions` (a plan's real amendment
+  history — the literal "changes to them" half of this signal category) and `GET
+  /api/app-version/{id}/items` (real planned-purchase line items: `name`, `month`, `deliveryAddress`,
+  `deliveryTime`, `eventType`) — both deferred to a future task (per-plan N+1 call cost).
 
 ## Resolved — see `docs/decisions/OPEN-QUESTIONS.md` for the full record
 
