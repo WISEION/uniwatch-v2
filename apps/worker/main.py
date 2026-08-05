@@ -24,6 +24,17 @@ logger = logging.getLogger("uniwatch.worker")
 LEASE_SECONDS = 30
 
 
+class JobVanished(RuntimeError):
+    """Jobs are never deleted, so a claimed job that can no longer be read
+    is a broken invariant. Raised instead of asserted: an `assert`
+    disappears under `python -O`, turning this into a `None` that surfaces
+    later as an unrelated AttributeError."""
+
+    def __init__(self, job_id: int):
+        super().__init__(f"job {job_id} vanished mid-processing (jobs are never deleted)")
+        self.job_id = job_id
+
+
 async def _process_claimed_job(engine: AsyncEngine, store: JobStore, job: Job, worker_id: str) -> None:
     # Correlation id is bound per job, threading API -> worker -> outbox
     # logs (NFR-OBS-01): the job's own correlation_id column was set at
@@ -39,7 +50,8 @@ async def _process_claimed_job(engine: AsyncEngine, store: JobStore, job: Job, w
         while not done:
             async with engine.begin() as conn:
                 current = await store.get(conn, job.id)
-                assert current is not None, f"job {job.id} vanished mid-processing (jobs are never deleted)"
+                if current is None:
+                    raise JobVanished(job.id)
                 checkpoint = await example_job.process_page(conn, current)
                 await store.checkpoint(conn, job.id, worker_id, checkpoint)
             done = checkpoint["done"]
@@ -49,11 +61,32 @@ async def _process_claimed_job(engine: AsyncEngine, store: JobStore, job: Job, w
         logger.info("completed job %s", job.id)
     except Exception as exc:
         logger.exception("job %s failed", job.id)
+        await _record_failure(engine, store, job.id, worker_id, exc)
+
+
+async def _record_failure(engine: AsyncEngine, store: JobStore, job_id: int, worker_id: str, exc: Exception) -> None:
+    """Records the failure so the job is retried with backoff (FR-JOB-03).
+
+    If recording itself fails (the DB went away, or the lease was already
+    reclaimed by another worker), that second failure must not silently
+    replace the first: it is logged together with the original error. It is
+    then not re-raised, because the job row is still `leased` and `claim`
+    reclaims it once the lease expires — killing the worker loop instead
+    would neither record the original error nor make the retry any more
+    likely."""
+    try:
         async with engine.begin() as conn:
-            current = await store.get(conn, job.id)
-            assert current is not None, f"job {job.id} vanished mid-processing (jobs are never deleted)"
+            current = await store.get(conn, job_id)
+            if current is None:
+                raise JobVanished(job_id)
             backoff = compute_backoff_seconds(current.attempt + 1)
-            await store.fail_retry(conn, job.id, worker_id, error=str(exc), backoff_seconds=backoff)
+            await store.fail_retry(conn, job_id, worker_id, error=str(exc), backoff_seconds=backoff)
+    except Exception:
+        logger.exception(
+            "could not record failure of job %s (original error: %r) — leaving it leased for lease-expiry reclaim",
+            job_id,
+            exc,
+        )
 
 
 async def run_once(engine: AsyncEngine, store: JobStore, worker_id: str) -> bool:

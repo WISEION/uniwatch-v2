@@ -28,6 +28,13 @@ class IdempotencyRecord:
     response_body: dict
 
 
+class IdempotencyReservationMissing(Exception):
+    def __init__(self, key: str, route: str):
+        super().__init__(f"no reservation row to store a response against for key {key!r} on {route!r}")
+        self.key = key
+        self.route = route
+
+
 class IdempotencyKeyReused(Exception):
     def __init__(self, key: str, route: str):
         super().__init__(f"idempotency key {key!r} reused on {route!r} for a materially different request")
@@ -104,7 +111,12 @@ class IdempotencyStore:
         status_code: int,
         body: dict,
     ) -> None:
-        await conn.execute(
+        """Must match the reservation `reserve` just made in this same
+        transaction. A zero-row UPDATE means it does not — that would leave
+        the key with no stored response, so the next replay of the same
+        request would repeat the side effect instead of returning this
+        response (FR-PLT-03). It is raised, never counted as stored."""
+        result = await conn.execute(
             text(
                 """
                 UPDATE idempotency_keys
@@ -119,3 +131,5 @@ class IdempotencyStore:
                 "body": json.dumps(body),
             },
         )
+        if result.rowcount == 0:
+            raise IdempotencyReservationMissing(key, route)

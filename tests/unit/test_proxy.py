@@ -3,6 +3,8 @@ unless it came through a configured trusted proxy CIDR."""
 
 from __future__ import annotations
 
+import logging
+
 from packages.platform.proxy import resolve_verified_peer_ip
 
 TRUSTED = ("10.0.0.0/8",)
@@ -52,3 +54,13 @@ def test_malformed_xff_value_falls_back_to_peer_ip():
         trusted_proxy_cidrs=TRUSTED,
     )
     assert ip == "10.0.0.1"
+
+
+def test_malformed_xff_from_trusted_proxy_is_logged_not_silently_ignored(caplog):
+    with caplog.at_level(logging.WARNING, logger="uniwatch.platform.proxy"):
+        resolve_verified_peer_ip(
+            peer_ip="10.0.0.1",
+            forwarded_for="not-an-ip",
+            trusted_proxy_cidrs=TRUSTED,
+        )
+    assert [r for r in caplog.records if r.levelno == logging.WARNING and "not-an-ip" in r.getMessage()]

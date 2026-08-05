@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from packages.platform.idempotency import IdempotencyKeyReused, IdempotencyStore, fingerprint
+from packages.platform.idempotency import (
+    IdempotencyKeyReused,
+    IdempotencyReservationMissing,
+    IdempotencyStore,
+    fingerprint,
+)
 
 
 async def test_new_key_reserves_and_returns_none(engine):
@@ -37,6 +42,16 @@ async def test_reusing_key_for_different_request_raises(engine):
     async with engine.begin() as conn:
         with pytest.raises(IdempotencyKeyReused):
             await store.reserve(conn, "key-3", "/things", fingerprint({"deadline": "2026-09-15"}))
+
+
+async def test_storing_a_response_without_a_reservation_raises(engine):
+    """A zero-row UPDATE would leave the key with no stored response, so the
+    next replay would repeat the mutation instead of replaying the result --
+    that cannot pass silently."""
+    store = IdempotencyStore()
+    async with engine.begin() as conn:
+        with pytest.raises(IdempotencyReservationMissing):
+            await store.store_response(conn, "key-never-reserved", "/things", 201, {"id": "x"})
 
 
 async def test_same_key_different_route_is_independent(engine):

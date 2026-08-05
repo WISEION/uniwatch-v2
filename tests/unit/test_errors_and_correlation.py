@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import traceback
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -77,6 +80,19 @@ async def test_unexpected_exception_is_500_with_envelope_not_traceback(client):
     body = response.json()
     assert body["error"]["code"] == "internal_error"
     assert body["error"]["correlation_id"] == "req-xyz"
+
+
+async def test_unexpected_exception_is_logged_with_its_traceback(client, caplog):
+    """The client is deliberately told nothing but `internal_error`, so the
+    log is the only record of the real cause — it must exist and carry the
+    stack (NFR-OBS-01)."""
+    with caplog.at_level(logging.ERROR, logger="uniwatch.api.errors"):
+        async with client:
+            await client.get("/boom/unexpected")
+    records = [r for r in caplog.records if r.name == "uniwatch.api.errors"]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    assert "something broke" in "".join(traceback.format_exception(*records[0].exc_info))
 
 
 async def test_invalid_request_body_returns_422_with_field_details(client):

@@ -4,6 +4,7 @@ migration ledger and dependency connectivity — it never applies migrations
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -11,6 +12,8 @@ from pydantic import BaseModel
 
 from packages.platform.errors import ApiError
 from packages.platform.migrations_runner import MigrationRunner
+
+logger = logging.getLogger("uniwatch.api.health")
 
 router = APIRouter(tags=["health"])
 
@@ -39,7 +42,12 @@ async def readiness(request: Request) -> ReadinessResponse:
     try:
         current = await runner.current_version()
     except Exception as exc:
-        raise ApiError(status_code=503, code="not_ready", message=f"database unreachable: {exc}") from exc
+        # Readiness is unauthenticated, so the response says only that the
+        # database is unreachable — the driver's own message (host, DSN,
+        # credentials in some failure modes) goes to the log instead of the
+        # probe's body, and is never dropped (NFR-OBS-01).
+        logger.exception("readiness probe could not read the migration ledger")
+        raise ApiError(status_code=503, code="not_ready", message="database unreachable") from exc
 
     if current is None or current != settings.expected_schema_version:
         raise ApiError(

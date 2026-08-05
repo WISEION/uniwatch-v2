@@ -473,3 +473,28 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** the intersection-detection primitive is real and proven, but its real-world coverage is still exactly as thin as task 2.B left it — Zaqatala remains the only real composite object found so far. Widening procurement-plan/design-tender coverage (more regions, more years) to find more real overlaps, and the tier/TTL work blocked on `TBD-TIS-01`/`TBD-TIS-02`, both remain open. Separately, this session also set up GitHub branch protection on `master` (owner-applied via the GitHub UI: required "Fast gate"/"Full gate" status checks, enforced for admins too, force-push and branch deletion blocked) — confirmed working by a real rejected `git push origin master` (`GH013: 2 of 2 required status checks are expected`). Going forward, work lands on a branch and merges after CI passes, not via direct push to `master`.
 
 **Блокеры:** нет новых. Non-blocking, recorded in `docs/decisions/OPEN-QUESTIONS.md`: `TBD-TIS-01` (TTL durations)/`TBD-TIS-02` (confidence tier thresholds) still need the owner's research/approval gate before tiers or decay can be built for real.
+
+## 2026-08-05 — cross-cutting: error-handling audit (no silently swallowed or downgraded failures)
+
+**Сделано:** audited every `except`/fallback path in `apps/` and `packages/` for failures that were swallowed, logged nowhere, or surfaced as the wrong kind of error, and fixed eight of them. `INV-11`'s "no silent fallback" and `NFR-OBS-01`'s traceability are the rules being enforced; no new requirement IDs were invented.
+
+- `packages/platform/errors.py` — the catch-all 500 handler returned a deliberately generic envelope but logged nothing, so an unexpected exception left no server-side record at all beyond whatever the ASGI server happened to print. It now logs with `exc_info` under the request's correlation id (`FR-PLT-01`, `NFR-OBS-01`).
+- `apps/api/routers/health.py` — readiness put the raw driver error text in an unauthenticated response body and kept no log. Logged instead; the body says only `database unreachable` (client-visible change).
+- `apps/worker/main.py` — two `assert`s guarding "jobs are never deleted" (stripped under `python -O`) became an explicit `JobVanished`; and if recording a job's failure itself failed, that second error replaced the original one and killed the worker loop. `_record_failure` now logs both and leaves the job leased for the existing lease-expiry reclaim (`FR-JOB-03`).
+- `packages/platform/pagination.py` + `apps/api/routers/admin_users.py` — a malformed `cursor` raised a raw base64/JSON error and came back as `internal_error` 500. `decode_cursor` raises typed `InvalidCursor`; the route answers 400 `invalid_cursor` (client-visible change, `FR-PLT-05`).
+- `packages/platform/idempotency.py` — `store_response` ignored a zero-row UPDATE, which would leave a key with no stored response and let the next replay repeat the mutation. Raises `IdempotencyReservationMissing` (`FR-PLT-03`).
+- `packages/platform/outbox.py` — a consumer error propagated with no outbox context and no log. Wrapped in `OutboxDeliveryFailed` (names the blocking event) and logged; transactional behaviour unchanged (`FR-JOB-07`).
+- `packages/platform/proxy.py` — an unparseable `X-Forwarded-For` from a *trusted* proxy fell back to the peer IP silently; the fallback stays (it is the safe answer) but is now logged as the misconfiguration it is (`FR-PLT-07`).
+- `tools/check_v1_untouched.py` — an unreadable file was `continue`d, i.e. a file the gate could not clear counted as a pass; unreadable files are now reported violations, and an unhashable v1 file fails the baseline comparison instead of silently shrinking the snapshot (`FR-MIG-04`, `NEG-01`, `NEG-02`).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network"
+258 passed, 33 skipped, 3 deselected in 41.66s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+179 files already formatted / All checks passed! / Success: no issues found in 55 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** nothing blocked by this. Two client-visible responses changed (readiness body text, 400 instead of 500 for a garbage cursor); no contract in `docs/` documented the old shapes, so nothing else needed updating.
+
+**Блокеры:** нет.

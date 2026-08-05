@@ -146,6 +146,12 @@ async def test_list_users_paginates_by_cursor_not_offset(client, admin_user, vie
     assert first_ids.isdisjoint(second_ids)
 
 
+async def test_garbage_cursor_is_a_client_error_not_an_internal_error(client, admin_user):
+    response = await client.get("/admin/users?cursor=not-a-real-cursor", headers={"X-Dev-User": admin_user})
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_cursor"
+
+
 async def test_get_never_writes_db_state(client, admin_user, viewer_role, engine):
     async def snapshot():
         async with engine.begin() as conn:

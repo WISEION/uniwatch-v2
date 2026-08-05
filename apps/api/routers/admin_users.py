@@ -15,7 +15,7 @@ from packages.platform.audit import UserNotFound, disable_user, write_audit_log
 from packages.platform.concurrency import check_precondition
 from packages.platform.errors import ApiError
 from packages.platform.idempotency import IdempotencyKeyReused, IdempotencyStore, fingerprint
-from packages.platform.pagination import decode_cursor, encode_cursor
+from packages.platform.pagination import InvalidCursor, decode_cursor, encode_cursor
 from packages.platform.rbac.dependency import require_permission
 from packages.platform.rbac.models import Identity
 
@@ -147,7 +147,10 @@ async def list_users(
     conn: AsyncConnection = Depends(get_connection),
     identity: Identity = Depends(require_permission("admin.users.read", get_current_identity)),
 ) -> UserListResponse:
-    after_id = decode_cursor(cursor)[0] if cursor else 0
+    try:
+        after_id = decode_cursor(cursor)[0] if cursor else 0
+    except (InvalidCursor, IndexError) as exc:
+        raise ApiError(status_code=400, code="invalid_cursor", message="cursor is not a cursor this API issued") from exc
     rows = (
         (
             await conn.execute(

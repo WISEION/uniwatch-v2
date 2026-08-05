@@ -3,6 +3,8 @@ outbox row."""
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import text
 
 from apps.worker.main import run_once
@@ -95,3 +97,37 @@ async def test_unknown_job_type_is_retried_not_silently_dropped(engine):
     assert job.status == "pending"
     assert job.attempt == 1
     assert "unknown job_type" in job.last_error
+
+
+async def test_failure_to_record_a_failure_still_reports_the_original_error(engine, caplog):
+    """FR-JOB-03: if the retry bookkeeping itself fails, the job's own error
+    must still reach the log rather than being replaced by the bookkeeping
+    error, and the worker loop must stay alive so the lease-expiry reclaim
+    can retry the job."""
+
+    class FailRetryBroken(JobStore):
+        async def fail_retry(self, *args, **kwargs):
+            raise RuntimeError("lost the connection while recording the failure")
+
+    store = FailRetryBroken()
+    async with engine.begin() as conn:
+        await store.enqueue(
+            conn,
+            JobIdentity(
+                job_type="not_a_real_job_type",
+                params={},
+                source="test-source",
+                range_start=None,
+                range_end=None,
+                contract_version="v1",
+                correlation_id="corr-double-failure",
+            ),
+        )
+
+    with caplog.at_level(logging.ERROR, logger="uniwatch.worker"):
+        claimed = await run_once(engine, store, worker_id="worker-5")
+    assert claimed is True
+
+    logged = "\n".join(r.getMessage() + str(r.exc_info) for r in caplog.records if r.name == "uniwatch.worker")
+    assert "unknown job_type" in logged
+    assert "lost the connection while recording the failure" in logged

@@ -8,7 +8,10 @@ must never influence lockout/rate-limit decisions.
 from __future__ import annotations
 
 import ipaddress
+import logging
 from collections.abc import Sequence
+
+logger = logging.getLogger("uniwatch.platform.proxy")
 
 
 def resolve_verified_peer_ip(
@@ -28,5 +31,14 @@ def resolve_verified_peer_ip(
     try:
         ipaddress.ip_address(candidate)
     except ValueError:
+        # Falling back to the TCP peer is the safe answer, but a *trusted*
+        # proxy emitting an unparseable X-Forwarded-For is a real
+        # misconfiguration (or an injection attempt through it) — silently
+        # falling back would hide it.
+        logger.warning(
+            "trusted proxy %s sent an unparseable X-Forwarded-For entry %r — using the peer address instead",
+            peer_ip,
+            candidate,
+        )
         return peer_ip
     return candidate

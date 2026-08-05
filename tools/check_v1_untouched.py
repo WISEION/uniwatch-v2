@@ -81,7 +81,12 @@ def scan_for_literals() -> list[str]:
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="ignore")
-            except (UnicodeDecodeError, OSError):
+            except OSError as exc:
+                # A file this gate could not read is a file it cannot clear:
+                # skipping it silently would turn an unreadable file into a
+                # pass, which is exactly the false negative NEG-01/NEG-02
+                # cannot afford.
+                violations.append(f"{path.relative_to(REPO_ROOT)}: could not be scanned for v1 path literals ({exc})")
                 continue
             for literal in FORBIDDEN_LITERALS:
                 if literal in text:
@@ -97,6 +102,17 @@ def hash_file(path: Path) -> str:
     return h.hexdigest()
 
 
+class UnreadableV1File(RuntimeError):
+    """A v1 file that cannot be hashed makes the baseline comparison
+    meaningless for that file. Raised so the gate fails loudly instead of
+    silently comparing a partial snapshot against a full baseline (which
+    would look like a deletion, or like a pass)."""
+
+    def __init__(self, path: Path, cause: OSError):
+        super().__init__(f"could not hash {path} for the v1 baseline comparison: {cause}")
+        self.path = path
+
+
 def snapshot(v1_path: Path) -> dict:
     snap = {}
     for dirpath, dirnames, filenames in os.walk(v1_path):
@@ -104,7 +120,10 @@ def snapshot(v1_path: Path) -> dict:
         for filename in filenames:
             p = Path(dirpath) / filename
             rel = str(p.relative_to(v1_path))
-            snap[rel] = hash_file(p)
+            try:
+                snap[rel] = hash_file(p)
+            except OSError as exc:
+                raise UnreadableV1File(p, exc) from exc
     return snap
 
 
@@ -130,7 +149,11 @@ def check_baseline(init: bool) -> list[str]:
             print(f"[warn] v1 path not present on this machine, skipping baseline check: {v1_path}")
             continue
 
-        current = snapshot(v1_path)
+        try:
+            current = snapshot(v1_path)
+        except UnreadableV1File as exc:
+            problems.append(str(exc))
+            continue
 
         if init or key not in baseline:
             baseline[key] = current

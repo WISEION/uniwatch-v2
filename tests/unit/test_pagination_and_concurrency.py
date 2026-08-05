@@ -6,7 +6,7 @@ import pytest
 
 from packages.platform.concurrency import PreconditionFailed, check_precondition
 from packages.platform.idempotency import fingerprint
-from packages.platform.pagination import decode_cursor, encode_cursor
+from packages.platform.pagination import InvalidCursor, decode_cursor, encode_cursor
 
 
 def test_cursor_roundtrips_sort_key():
@@ -18,6 +18,20 @@ def test_cursor_is_opaque_not_a_raw_offset():
     cursor = encode_cursor((1, "abc"))
     assert cursor.isdigit() is False
     assert "1" not in cursor.split("=")[0][:1]  # not literally the offset "1" up front
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "not-base64!!",
+        "\u00e7ursor",  # not even ASCII-encodable
+        encode_cursor((1,))[:-3],  # truncated in transit
+        "eyJhIjogMX0=",  # valid base64 JSON, but an object, not a sort-key list
+    ],
+)
+def test_client_supplied_garbage_cursor_raises_typed_invalid_cursor(cursor):
+    with pytest.raises(InvalidCursor):
+        decode_cursor(cursor)
 
 
 def test_matching_version_passes_precondition():
