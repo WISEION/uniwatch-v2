@@ -5,18 +5,16 @@ gets masked by another subresource's success."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
+from source_fixtures import ETENDER_FIXTURES
 from sqlalchemy import text
 
 from packages.tender.etender_connector import ingest_bom_lines_page, ingest_event_details
 from packages.tender.schema_drift import SchemaDriftDetected
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 
 def _load_bytes(name: str) -> bytes:
-    return (FIXTURES / name).read_bytes()
+    return (ETENDER_FIXTURES / name).read_bytes()
 
 
 async def test_boq_ingestion_failure_does_not_affect_successful_details_ingestion(engine):

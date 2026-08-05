@@ -6,11 +6,10 @@ design-tender classifier must get right."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import ETENDER_FIXTURES
 
 from packages.tender.design_tender_signal import build_design_tender_signal, classify_design_tender
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
 
 # Ground truth for every real item across both frozen fixture pages
 # (fixtures/tender-snapshots/etender/MANIFEST.md), verified by hand against
@@ -32,8 +31,8 @@ _PAGE2_EXPECTED_FALSE_EVENT_IDS = {356291, 356048, 356027, 355959}
 
 
 def test_classifier_matches_every_real_item_across_both_fixture_pages():
-    page1 = json.loads((FIXTURES / "design_tender_search_page1.raw.json").read_bytes())
-    page2 = json.loads((FIXTURES / "design_tender_search_page2.raw.json").read_bytes())
+    page1 = json.loads((ETENDER_FIXTURES / "design_tender_search_page1.raw.json").read_bytes())
+    page2 = json.loads((ETENDER_FIXTURES / "design_tender_search_page2.raw.json").read_bytes())
 
     page1_true = {item["eventId"] for item in page1["items"] if classify_design_tender(item["eventName"])}
     assert page1_true == _PAGE1_EXPECTED_TRUE_EVENT_IDS

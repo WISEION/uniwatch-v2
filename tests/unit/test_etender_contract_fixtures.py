@@ -6,7 +6,8 @@ Fast gate."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import ETENDER_FIXTURES
 
 from packages.tender.etender_contract import (
     BOM_LINES_PAGE_CONTRACT,
@@ -15,11 +16,9 @@ from packages.tender.etender_contract import (
 )
 from packages.tender.schema_drift import detect_schema_drift
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 
 def _load(name: str) -> dict:
-    return json.loads((FIXTURES / name).read_bytes())
+    return json.loads((ETENDER_FIXTURES / name).read_bytes())
 
 
 def test_event_details_contract_matches_real_capture():

@@ -6,34 +6,18 @@ pagination."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import DESIGN_TENDER_QUERY_PARAMS, ETENDER_FIXTURES
 
 from packages.platform.jobs import Job
 from packages.tender.design_tender_job import process_design_tender_page
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
-QUERY_PARAMS = {
-    "EventType": "",
-    "PageSize": 10,
-    "EventStatus": 1,
-    "Keyword": "layihə",
-    "buyerOrganizationName": "",
-    "documentNumber": "",
-    "publishDateFrom": "",
-    "publishDateTo": "",
-    "AwardedparticipantName": "",
-    "AwardedparticipantVoen": "",
-    "DocumentViewType": "",
-    "IsArchived": False,
-}
 
 
 def _make_job(checkpoint: dict) -> Job:
     return Job(
         id=1,
         job_type="etender_design_tender_page_fetch",
-        params={"query_params": QUERY_PARAMS},
+        params={"query_params": DESIGN_TENDER_QUERY_PARAMS},
         source="etender",
         range_start=None,
         range_end=None,
@@ -49,14 +33,14 @@ def _make_job(checkpoint: dict) -> Job:
 
 
 async def test_page_fetch_failure_resumes_same_page_not_next(engine):
-    real_page1 = json.loads((FIXTURES / "design_tender_search_page1.raw.json").read_bytes())
+    real_page1 = json.loads((ETENDER_FIXTURES / "design_tender_search_page1.raw.json").read_bytes())
     attempts = []
 
     async def fetch_page(query_params, page_number):
         attempts.append(page_number)
         if page_number == 1 and attempts.count(1) == 1:
             raise ConnectionError("simulated transient failure on first page")
-        raw = (FIXTURES / f"design_tender_search_page{page_number}.raw.json").read_bytes()
+        raw = (ETENDER_FIXTURES / f"design_tender_search_page{page_number}.raw.json").read_bytes()
         return raw, json.loads(raw)
 
     async with engine.begin() as conn:
@@ -84,13 +68,13 @@ async def test_page_fetch_failure_resumes_same_page_not_next(engine):
 
 
 async def test_schema_drift_on_one_page_does_not_stall_pagination(engine):
-    real_page1 = json.loads((FIXTURES / "design_tender_search_page1.raw.json").read_bytes())
+    real_page1 = json.loads((ETENDER_FIXTURES / "design_tender_search_page1.raw.json").read_bytes())
     drifted_page1 = {**real_page1, "unexpected_new_field": "drift"}
 
     async def fetch_page(query_params, page_number):
         if page_number == 1:
             return json.dumps(drifted_page1).encode(), drifted_page1
-        raw = (FIXTURES / f"design_tender_search_page{page_number}.raw.json").read_bytes()
+        raw = (ETENDER_FIXTURES / f"design_tender_search_page{page_number}.raw.json").read_bytes()
         return raw, json.loads(raw)
 
     async with engine.begin() as conn:

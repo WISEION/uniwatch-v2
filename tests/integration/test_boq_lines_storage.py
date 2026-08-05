@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
-from pathlib import Path
 
+from source_fixtures import ETENDER_FIXTURES
 from sqlalchemy import text
 
 from packages.tender.boq_line_model import build_boq_lines
@@ -15,11 +15,9 @@ from packages.tender.boq_lines_store import store_boq_lines
 from packages.tender.normalized import create_normalized_version, get_or_create_tender
 from packages.tender.raw_snapshot import save_raw_snapshot
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 
 async def _setup_version(conn, *, correlation_id: str) -> tuple[int, int]:
-    raw_body = (FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
+    raw_body = (ETENDER_FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
     snapshot_id = await save_raw_snapshot(
         conn,
         source="etender",
@@ -41,7 +39,7 @@ async def _setup_version(conn, *, correlation_id: str) -> tuple[int, int]:
 
 
 async def test_stores_all_lines_from_real_page_1(engine):
-    raw_body = (FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
+    raw_body = (ETENDER_FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
     payload = json.loads(raw_body)
     lines = build_boq_lines(page_number=1, items=payload["items"])
 
@@ -80,7 +78,7 @@ async def test_stores_all_lines_from_real_page_1(engine):
 
 
 async def test_stored_lines_trace_back_to_their_raw_snapshot_and_version(engine):
-    raw_body = (FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
+    raw_body = (ETENDER_FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
     payload = json.loads(raw_body)
     lines = build_boq_lines(page_number=1, items=payload["items"])[:1]
 

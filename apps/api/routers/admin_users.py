@@ -25,6 +25,12 @@ router = APIRouter(prefix="/admin/users", tags=["admin-users"])
 
 _idempotency_store = IdempotencyStore()
 
+_USER_SELECT = """
+    SELECT u.id, u.username, u.display_name, u.status, u.version, r.name AS role_name
+    FROM users u
+    JOIN roles r ON r.id = u.role_id
+"""
+
 
 class CreateUserRequest(BaseModel):
     username: str
@@ -63,23 +69,7 @@ async def _load_role_id(conn: AsyncConnection, role_name: str) -> int:
 
 
 async def _load_user_row(conn: AsyncConnection, user_id: int) -> dict:
-    row = (
-        (
-            await conn.execute(
-                text(
-                    """
-                SELECT u.id, u.username, u.display_name, u.status, u.version, r.name AS role_name
-                FROM users u
-                JOIN roles r ON r.id = u.role_id
-                WHERE u.id = :id
-                """
-                ),
-                {"id": user_id},
-            )
-        )
-        .mappings()
-        .first()
-    )
+    row = (await conn.execute(text(f"{_USER_SELECT} WHERE u.id = :id"), {"id": user_id})).mappings().first()
     if row is None:
         raise ApiError(status_code=404, code="not_found", message=f"user {user_id} not found")
     return dict(row)
@@ -151,16 +141,7 @@ async def list_users(
     rows = (
         (
             await conn.execute(
-                text(
-                    """
-                SELECT u.id, u.username, u.display_name, u.status, u.version, r.name AS role_name
-                FROM users u
-                JOIN roles r ON r.id = u.role_id
-                WHERE u.id > :after_id
-                ORDER BY u.id ASC
-                LIMIT :limit_plus_one
-                """
-                ),
+                text(f"{_USER_SELECT} WHERE u.id > :after_id ORDER BY u.id ASC LIMIT :limit_plus_one"),
                 {"after_id": after_id, "limit_plus_one": limit + 1},
             )
         )

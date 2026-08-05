@@ -11,8 +11,8 @@ normalization didn't happen. These tests catch it the same way."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
+from source_fixtures import ETENDER_FIXTURES, EVENTS_LIST_QUERY_PARAMS
 from sqlalchemy import text
 
 from packages.tender.etender_connector import (
@@ -22,11 +22,9 @@ from packages.tender.etender_connector import (
 )
 from packages.tender.schema_drift import SchemaDriftDetected
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 
 def _load_bytes(name: str) -> bytes:
-    return (FIXTURES / name).read_bytes()
+    return (ETENDER_FIXTURES / name).read_bytes()
 
 
 async def test_ingest_real_fixture_creates_raw_snapshot_and_normalized_version(engine):
@@ -117,20 +115,7 @@ async def test_ingest_real_bom_lines_page_fixture(engine):
     assert len(version.normalized_fields["line_ids"]) == payload["itemsInPage"]
 
 
-EVENTS_LIST_DEFAULT_QUERY_PARAMS = {
-    "EventType": "",
-    "PageSize": 6,
-    "EventStatus": 1,
-    "Keyword": "",
-    "buyerOrganizationName": "",
-    "documentNumber": "",
-    "publishDateFrom": "",
-    "publishDateTo": "",
-    "AwardedparticipantName": "",
-    "AwardedparticipantVoen": "",
-    "DocumentViewType": "",
-    "IsArchived": False,
-}
+EVENTS_LIST_DEFAULT_QUERY_PARAMS = {**EVENTS_LIST_QUERY_PARAMS, "PageSize": 6}
 
 
 async def test_ingest_real_events_list_page_fixture(engine):

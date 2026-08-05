@@ -473,3 +473,29 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** the intersection-detection primitive is real and proven, but its real-world coverage is still exactly as thin as task 2.B left it — Zaqatala remains the only real composite object found so far. Widening procurement-plan/design-tender coverage (more regions, more years) to find more real overlaps, and the tier/TTL work blocked on `TBD-TIS-01`/`TBD-TIS-02`, both remain open. Separately, this session also set up GitHub branch protection on `master` (owner-applied via the GitHub UI: required "Fast gate"/"Full gate" status checks, enforced for admins too, force-push and branch deletion blocked) — confirmed working by a real rejected `git push origin master` (`GH013: 2 of 2 required status checks are expected`). Going forward, work lands on a branch and merges after CI passes, not via direct push to `master`.
 
 **Блокеры:** нет новых. Non-blocking, recorded in `docs/decisions/OPEN-QUESTIONS.md`: `TBD-TIS-01` (TTL durations)/`TBD-TIS-02` (confidence tier thresholds) still need the owner's research/approval gate before tiers or decay can be built for real.
+
+## 2026-08-05 — Repo hygiene: duplicated ingestion/job code extracted into shared utilities
+
+**Сделано (no behaviour change — pure refactor, every existing test unchanged and passing):**
+- `packages/tender/evidence_gate.py` — new `capture_and_gate()`: the "save raw evidence unconditionally, then gate on the frozen contract, then report drift on the outbox and raise" sequence (INT-01, INT-02, FR-TND-10) existed three times, near-identically, in `etender_connector._ingest`, `etender_connector.ingest_procurement_plan_page` and `worldbank_connector.ingest_donor_pipeline_page`. The per-source differences (source name, outbox `aggregate_type`, whether there is a per-item contract) are now parameters. Items are pulled by an `items_extractor` that only runs after the page-level shape is known clean, so a page missing its items key is still reported as drift with its evidence saved, never a `KeyError`.
+- `packages/tender/page_job.py` — new `page_cursor()`, `quarantine_schema_drift()` and `ingest_signal_page()`: the schema-drift quarantine + cursor-advance shape (INV-03, FR-JOB-04/05/06, P305) was copied in all four page jobs (`bom_lines_job`, `design_tender_job`, `procurement_plan_job`, `worldbank_pipeline_job`). The World Bank job keeps its own offset cursor (it pages by `os`, not by page number) and passes it in.
+- `packages/platform/egress/json_fetch.py` — new `fetch_json()` + one `UnexpectedResponseStatus`: the three live fetchers each re-declared their own exception class and repeated the same "require 200, `json.loads`, return `(raw_body, payload)`" block. Error messages are unchanged (each fetcher passes its own `source_label`).
+- `packages/tender/signals_store.py` — new `build_and_store_signals()` (the build-one-Signal-per-item loop, used by all three signal sources) and `_select_signals()` (the signal column list + jsonb decode, previously written out twice).
+- `packages/tender/etender_contract.py` — `PAGED_LIST_ENVELOPE_FIELDS`: eTender's paged-list envelope was spelled out field-by-field in three contracts. Per-item contracts are unchanged.
+- `packages/platform/migrations_runner.py` — `_LEDGER_UPSERT_SQL`: the ledger upsert was duplicated between the preflight-failed and the applied path, with `preflight_status`/`postflight_status` now bound as parameters instead of inlined literals.
+- `apps/api/routers/admin_users.py` — `_USER_SELECT` shared between `_load_user_row` and `list_users`.
+- `tests/source_fixtures.py` — the fixtures-directory path constant (20 test modules) and the eTender events-list query-parameter set (6 test modules, 5 of them byte-identical) now live in one place; `DESIGN_TENDER_QUERY_PARAMS` is the unfiltered set plus the real `Keyword=layihə` filter.
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests -q -m "not live_network"
+246 passed, 33 skipped, 3 deselected in 36.13s
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+182 files already formatted / All checks passed! / Success: no issues found in 58 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+$ npx jscpd --min-lines 6 --min-tokens 60 --format python packages apps tests
+0 clones (was 10 clones / 159 duplicated lines before this change)
+```
+
+**Дальше:** unchanged — the open items from task 2.C (`TBD-TIS-01`/`TBD-TIS-02`, widening real-source coverage) are untouched by this refactor.
+
+**Блокеры:** нет.

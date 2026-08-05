@@ -6,12 +6,11 @@ pagination."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import WORLDBANK_FIXTURES
 
 from packages.platform.jobs import Job
 from packages.tender.worldbank_pipeline_job import process_worldbank_pipeline_page
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "worldbank"
 
 
 def _make_job(checkpoint: dict) -> Job:
@@ -34,15 +33,15 @@ def _make_job(checkpoint: dict) -> Job:
 
 
 async def test_page_fetch_failure_resumes_same_page_not_next(engine):
-    real_page_os0 = json.loads((FIXTURES / "az_donor_pipeline_page_os0.raw.json").read_bytes())
-    real_page_os10 = json.loads((FIXTURES / "az_donor_pipeline_page_os10.raw.json").read_bytes())
+    real_page_os0 = json.loads((WORLDBANK_FIXTURES / "az_donor_pipeline_page_os0.raw.json").read_bytes())
+    real_page_os10 = json.loads((WORLDBANK_FIXTURES / "az_donor_pipeline_page_os10.raw.json").read_bytes())
     attempts = []
 
     async def fetch_page(countrycode, rows, os_):
         attempts.append(os_)
         if os_ == 0 and attempts.count(0) == 1:
             raise ConnectionError("simulated transient failure on first page")
-        raw = (FIXTURES / f"az_donor_pipeline_page_os{os_}.raw.json").read_bytes()
+        raw = (WORLDBANK_FIXTURES / f"az_donor_pipeline_page_os{os_}.raw.json").read_bytes()
         return raw, json.loads(raw)
 
     async with engine.begin() as conn:
@@ -72,13 +71,13 @@ async def test_page_fetch_failure_resumes_same_page_not_next(engine):
 
 
 async def test_schema_drift_on_one_page_does_not_stall_pagination(engine):
-    real_page_os0 = json.loads((FIXTURES / "az_donor_pipeline_page_os0.raw.json").read_bytes())
+    real_page_os0 = json.loads((WORLDBANK_FIXTURES / "az_donor_pipeline_page_os0.raw.json").read_bytes())
     drifted_page_os0 = {**real_page_os0, "unexpected_new_field": "drift"}
 
     async def fetch_page(countrycode, rows, os_):
         if os_ == 0:
             return json.dumps(drifted_page_os0).encode(), drifted_page_os0
-        raw = (FIXTURES / f"az_donor_pipeline_page_os{os_}.raw.json").read_bytes()
+        raw = (WORLDBANK_FIXTURES / f"az_donor_pipeline_page_os{os_}.raw.json").read_bytes()
         return raw, json.loads(raw)
 
     async with engine.begin() as conn:

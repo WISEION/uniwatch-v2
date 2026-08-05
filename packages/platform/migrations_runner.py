@@ -29,6 +29,23 @@ from pathlib import Path
 
 import asyncpg
 
+# ON CONFLICT ... DO UPDATE, not DO NOTHING: a version can already have a
+# ledger row from an earlier quarantined attempt (pending() lets
+# preflight-failed versions be retried), and that stale row must be
+# overwritten, not left behind masking this attempt's outcome.
+_LEDGER_UPSERT_SQL = """
+    INSERT INTO schema_migrations
+        (version, description, checksum, applied_by, preflight_status, postflight_status)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (version) DO UPDATE SET
+        description = EXCLUDED.description,
+        checksum = EXCLUDED.checksum,
+        applied_at = now(),
+        applied_by = EXCLUDED.applied_by,
+        preflight_status = EXCLUDED.preflight_status,
+        postflight_status = EXCLUDED.postflight_status
+"""
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -155,31 +172,9 @@ class MigrationRunner:
             conn = await self._connect()
             try:
                 if preflight is not None and not await preflight(conn, m):
-                    # ON CONFLICT ... DO UPDATE, not DO NOTHING: a version can
-                    # already have a ledger row from an earlier quarantined
-                    # attempt (pending() now lets preflight-failed versions be
-                    # retried), and that stale 'failed'/'skipped' row must be
-                    # overwritten, not left behind masking this attempt's
-                    # outcome.
                     async with conn.transaction():
                         await conn.execute(
-                            """
-                            INSERT INTO schema_migrations
-                                (version, description, checksum, applied_by,
-                                 preflight_status, postflight_status)
-                            VALUES ($1, $2, $3, $4, 'failed', 'skipped')
-                            ON CONFLICT (version) DO UPDATE SET
-                                description = EXCLUDED.description,
-                                checksum = EXCLUDED.checksum,
-                                applied_at = now(),
-                                applied_by = EXCLUDED.applied_by,
-                                preflight_status = EXCLUDED.preflight_status,
-                                postflight_status = EXCLUDED.postflight_status
-                            """,
-                            m.version,
-                            m.description,
-                            m.checksum,
-                            applied_by,
+                            _LEDGER_UPSERT_SQL, m.version, m.description, m.checksum, applied_by, "failed", "skipped"
                         )
                     raise PreflightFailed(m.version)
 
@@ -189,24 +184,7 @@ class MigrationRunner:
                     if postflight is not None and not await postflight(conn, m):
                         postflight_status = "failed"
                     await conn.execute(
-                        """
-                        INSERT INTO schema_migrations
-                            (version, description, checksum, applied_by,
-                             preflight_status, postflight_status)
-                        VALUES ($1, $2, $3, $4, 'passed', $5)
-                        ON CONFLICT (version) DO UPDATE SET
-                            description = EXCLUDED.description,
-                            checksum = EXCLUDED.checksum,
-                            applied_at = now(),
-                            applied_by = EXCLUDED.applied_by,
-                            preflight_status = EXCLUDED.preflight_status,
-                            postflight_status = EXCLUDED.postflight_status
-                        """,
-                        m.version,
-                        m.description,
-                        m.checksum,
-                        applied_by,
-                        postflight_status,
+                        _LEDGER_UPSERT_SQL, m.version, m.description, m.checksum, applied_by, "passed", postflight_status
                     )
                 if postflight_status == "failed":
                     raise PostflightFailed(m.version)

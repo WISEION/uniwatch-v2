@@ -6,7 +6,8 @@ drifted one is reported via the existing transactional outbox
 (schema_drift_event) and raises, so nothing gets silently mapped against
 a contract it no longer matches.
 
-`_ingest` is the shared mechanism; `ingest_event_details`,
+`_ingest` wraps the package-wide capture-and-gate mechanism
+(`evidence_gate.capture_and_gate`); `ingest_event_details`,
 `ingest_bom_lines_page`, and `ingest_events_list_page` are thin,
 resource-specific wrappers around it — one per contract this task has a
 real captured fixture for. None of them do resumable pagination or BOQ
@@ -15,15 +16,13 @@ one already-fetched page/response."""
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from packages.platform import outbox
-from packages.platform.egress.fetch import fetch_via_validator
+from packages.platform.egress.json_fetch import fetch_json
 from packages.platform.egress.validator import EgressValidator
 
 from .design_tender_signal import build_design_tender_signal, classify_design_tender
@@ -35,12 +34,11 @@ from .etender_contract import (
     EVENT_DETAILS_CONTRACT,
     EVENTS_LIST_PAGE_CONTRACT,
 )
+from .evidence_gate import capture_and_gate
 from .normalized import TenderVersion, create_normalized_version, get_or_create_tender
 from .procurement_plan_signal import build_procurement_plan_signal
-from .raw_snapshot import save_raw_snapshot
-from .schema_drift import SchemaDriftDetected, detect_schema_drift, detect_schema_drift_over_items
-from .signals_store import store_signal
-from .source_contract import SourceContract, canonical_identity
+from .signals_store import build_and_store_signals
+from .source_contract import SourceContract
 
 PARSER_VERSION = "etender-v1"
 
@@ -57,41 +55,18 @@ async def _ingest(
     item_contract: SourceContract | None = None,
     items_extractor: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
 ) -> TenderVersion:
-    identity_key = canonical_identity(contract, identity_params)
-
-    snapshot_id = await save_raw_snapshot(
+    snapshot_id, identity_key = await capture_and_gate(
         conn,
         source="etender",
-        resource_type=contract.name,
-        identity_key=identity_key,
+        contract=contract,
+        identity_params=identity_params,
         raw_body=raw_body,
-        contract_version=contract.name,
+        payload=payload,
         correlation_id=correlation_id,
+        outbox_aggregate_type="tender_source_contract",
+        item_contract=item_contract,
+        items_extractor=items_extractor,
     )
-
-    drift = detect_schema_drift(contract, payload)
-    if not drift.has_drift and item_contract is not None and items_extractor is not None:
-        drift = detect_schema_drift_over_items(item_contract, items_extractor(payload))
-        drifted_contract_name = item_contract.name
-    else:
-        drifted_contract_name = contract.name
-
-    if drift.has_drift:
-        await outbox.enqueue(
-            conn,
-            aggregate_type="tender_source_contract",
-            aggregate_id=drifted_contract_name,
-            event_type="schema_drift_event",
-            payload={
-                "contract": drifted_contract_name,
-                "identity_key": identity_key,
-                "added_fields": list(drift.added_fields),
-                "removed_fields": list(drift.removed_fields),
-                "type_changed_fields": list(drift.type_changed_fields),
-            },
-            correlation_id=correlation_id,
-        )
-        raise SchemaDriftDetected(drift, contract_name=drifted_contract_name, raw_snapshot_id=snapshot_id)
 
     tender_id = await get_or_create_tender(conn, source="etender", identity_key=identity_key)
 
@@ -210,15 +185,14 @@ async def ingest_design_tender_signals_page(
         conn, raw_body=raw_body, payload=payload, query_params=query_params, correlation_id=correlation_id
     )
 
-    signal_ids = []
-    for item in payload["items"]:
-        if not classify_design_tender(item["eventName"]):
-            continue
-        signal = build_design_tender_signal(
-            item, raw_snapshot_id=version.raw_snapshot_id, observed_at=observed_at, correlation_id=correlation_id
-        )
-        signal_ids.append(await store_signal(conn, signal))
-    return signal_ids
+    return await build_and_store_signals(
+        conn,
+        [item for item in payload["items"] if classify_design_tender(item["eventName"])],
+        build_design_tender_signal,
+        raw_snapshot_id=version.raw_snapshot_id,
+        observed_at=observed_at,
+        correlation_id=correlation_id,
+    )
 
 
 async def ingest_procurement_plan_page(
@@ -232,55 +206,31 @@ async def ingest_procurement_plan_page(
     correlation_id: str,
     observed_at: str,
 ) -> list[int]:
-    identity_key = canonical_identity(
-        APP_LIST_PAGE_CONTRACT,
-        {"Year": str(year), "PageNumber": str(page_number), "BuyerOrganizationName": buyer_organization_name},
-    )
-
-    snapshot_id = await save_raw_snapshot(
+    snapshot_id, _identity_key = await capture_and_gate(
         conn,
         source="etender",
-        resource_type=APP_LIST_PAGE_CONTRACT.name,
-        identity_key=identity_key,
+        contract=APP_LIST_PAGE_CONTRACT,
+        identity_params={
+            "Year": str(year),
+            "PageNumber": str(page_number),
+            "BuyerOrganizationName": buyer_organization_name,
+        },
         raw_body=raw_body,
-        contract_version=APP_LIST_PAGE_CONTRACT.name,
+        payload=payload,
         correlation_id=correlation_id,
+        outbox_aggregate_type="signal_source_contract",
+        item_contract=APP_ITEM_CONTRACT,
+        items_extractor=lambda p: p["items"],
     )
 
-    drift = detect_schema_drift(APP_LIST_PAGE_CONTRACT, payload)
-    drifted_contract_name = APP_LIST_PAGE_CONTRACT.name
-    if not drift.has_drift:
-        drift = detect_schema_drift_over_items(APP_ITEM_CONTRACT, payload["items"])
-        drifted_contract_name = APP_ITEM_CONTRACT.name
-
-    if drift.has_drift:
-        await outbox.enqueue(
-            conn,
-            aggregate_type="signal_source_contract",
-            aggregate_id=drifted_contract_name,
-            event_type="schema_drift_event",
-            payload={
-                "contract": drifted_contract_name,
-                "identity_key": identity_key,
-                "added_fields": list(drift.added_fields),
-                "removed_fields": list(drift.removed_fields),
-                "type_changed_fields": list(drift.type_changed_fields),
-            },
-            correlation_id=correlation_id,
-        )
-        raise SchemaDriftDetected(drift, contract_name=drifted_contract_name, raw_snapshot_id=snapshot_id)
-
-    signal_ids = []
-    for item in payload["items"]:
-        signal = build_procurement_plan_signal(
-            item, raw_snapshot_id=snapshot_id, observed_at=observed_at, correlation_id=correlation_id
-        )
-        signal_ids.append(await store_signal(conn, signal))
-    return signal_ids
-
-
-class UnexpectedResponseStatus(Exception):
-    pass
+    return await build_and_store_signals(
+        conn,
+        payload["items"],
+        build_procurement_plan_signal,
+        raw_snapshot_id=snapshot_id,
+        observed_at=observed_at,
+        correlation_id=correlation_id,
+    )
 
 
 async def fetch_design_tender_page_live(
@@ -292,10 +242,7 @@ async def fetch_design_tender_page_live(
 ) -> tuple[bytes, dict[str, Any]]:
     params = {**query_params, "PageNumber": page_number}
     url = f"https://etender.gov.az/api/events?{urlencode(params)}"
-    status, body, _headers = await fetch_via_validator(conn, validator, url)
-    if status != 200:
-        raise UnexpectedResponseStatus(f"eTender events search returned HTTP {status} for {url!r}")
-    return body, json.loads(body)
+    return await fetch_json(conn, validator, url, source_label="eTender events search")
 
 
 async def fetch_procurement_plan_page_live(
@@ -310,7 +257,4 @@ async def fetch_procurement_plan_page_live(
     if buyer_organization_name:
         params["BuyerOrganizationName"] = buyer_organization_name
     url = f"https://etender.gov.az/api/app?{urlencode(params)}"
-    status, body, _headers = await fetch_via_validator(conn, validator, url)
-    if status != 200:
-        raise UnexpectedResponseStatus(f"eTender app-list search returned HTTP {status} for {url!r}")
-    return body, json.loads(body)
+    return await fetch_json(conn, validator, url, source_label="eTender app-list search")

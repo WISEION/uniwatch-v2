@@ -5,16 +5,15 @@ page level and for every project item inside them."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import WORLDBANK_FIXTURES
 
 from packages.tender.schema_drift import detect_schema_drift, detect_schema_drift_over_items
 from packages.tender.worldbank_contract import DONOR_PIPELINE_PAGE_CONTRACT, DONOR_PIPELINE_PROJECT_CONTRACT
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "worldbank"
-
 
 def _load(name: str) -> dict:
-    return json.loads((FIXTURES / name).read_text())
+    return json.loads((WORLDBANK_FIXTURES / name).read_text())
 
 
 def test_page_os0_fixture_is_drift_free():

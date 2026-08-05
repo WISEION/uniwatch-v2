@@ -10,6 +10,23 @@ from __future__ import annotations
 
 from .source_contract import FieldSpec, SourceContract
 
+# eTender returns the same paged-list envelope around every list resource
+# (BOM lines, events, procurement plans) — verified identical across every
+# captured fixture (see MANIFEST.md). Only each resource's `items` shape
+# differs, which is what the per-item contracts below cover.
+PAGED_LIST_ENVELOPE_FIELDS = (
+    FieldSpec("currentPage", "number"),
+    FieldSpec("totalPages", "number"),
+    FieldSpec("pageSize", "number"),
+    FieldSpec("itemsInPage", "number"),
+    FieldSpec("totalItems", "number"),
+    FieldSpec("items", "array"),
+    FieldSpec("hasPreviousPage", "boolean"),
+    FieldSpec("hasNextPage", "boolean"),
+    FieldSpec("firstItem", "number"),
+    FieldSpec("lastItem", "number"),
+)
+
 EVENT_DETAILS_CONTRACT = SourceContract(
     name="etender.event_details",
     identity_query_keys=("id",),
@@ -43,18 +60,7 @@ EVENT_DETAILS_CONTRACT = SourceContract(
 BOM_LINES_PAGE_CONTRACT = SourceContract(
     name="etender.bom_lines_page",
     identity_query_keys=("event_id", "PageNumber"),
-    fields=(
-        FieldSpec("currentPage", "number"),
-        FieldSpec("totalPages", "number"),
-        FieldSpec("pageSize", "number"),
-        FieldSpec("itemsInPage", "number"),
-        FieldSpec("totalItems", "number"),
-        FieldSpec("items", "array"),
-        FieldSpec("hasPreviousPage", "boolean"),
-        FieldSpec("hasNextPage", "boolean"),
-        FieldSpec("firstItem", "number"),
-        FieldSpec("lastItem", "number"),
-    ),
+    fields=PAGED_LIST_ENVELOPE_FIELDS,
 )
 
 # Captured from fixtures/tender-snapshots/etender/events_list_page1.raw.json
@@ -87,18 +93,7 @@ EVENTS_LIST_PAGE_CONTRACT = SourceContract(
         "DocumentViewType",
         "IsArchived",
     ),
-    fields=(
-        FieldSpec("currentPage", "number"),
-        FieldSpec("totalPages", "number"),
-        FieldSpec("pageSize", "number"),
-        FieldSpec("itemsInPage", "number"),
-        FieldSpec("totalItems", "number"),
-        FieldSpec("items", "array"),
-        FieldSpec("hasPreviousPage", "boolean"),
-        FieldSpec("hasNextPage", "boolean"),
-        FieldSpec("firstItem", "number"),
-        FieldSpec("lastItem", "number"),
-    ),
+    fields=PAGED_LIST_ENVELOPE_FIELDS,
 )
 
 # Per-item shape inside BOM_LINES_PAGE_CONTRACT's `items` array (INT-01,
@@ -129,18 +124,7 @@ BOM_LINE_ITEM_CONTRACT = SourceContract(
 APP_LIST_PAGE_CONTRACT = SourceContract(
     name="etender.app_list_page",
     identity_query_keys=("Year", "PageNumber", "BuyerOrganizationName"),
-    fields=(
-        FieldSpec("currentPage", "number"),
-        FieldSpec("totalPages", "number"),
-        FieldSpec("pageSize", "number"),
-        FieldSpec("itemsInPage", "number"),
-        FieldSpec("totalItems", "number"),
-        FieldSpec("items", "array"),
-        FieldSpec("hasPreviousPage", "boolean"),
-        FieldSpec("hasNextPage", "boolean"),
-        FieldSpec("firstItem", "number"),
-        FieldSpec("lastItem", "number"),
-    ),
+    fields=PAGED_LIST_ENVELOPE_FIELDS,
 )
 
 # Per-item shape inside APP_LIST_PAGE_CONTRACT's `items` array. Verified against every item across

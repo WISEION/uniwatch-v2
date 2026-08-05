@@ -34,13 +34,13 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from packages.platform.exception_queue import enqueue_exception
 from packages.platform.jobs import Job
 
 from .boq_completeness import record_page_fetched
 from .boq_line_model import build_boq_lines
 from .boq_lines_store import store_boq_lines
 from .etender_connector import ingest_bom_lines_page
+from .page_job import page_cursor, quarantine_schema_drift
 from .raw_snapshot import checksum_of
 from .schema_drift import SchemaDriftDetected
 
@@ -54,6 +54,7 @@ async def process_bom_lines_page(conn: AsyncConnection, job: Job, fetch_page: Fe
     next_page = job.checkpoint.get("next_page", 1)
 
     raw_body, payload = await fetch_page(event_id, next_page)
+    cursor = page_cursor(next_page, payload.get("totalPages"))
 
     try:
         version = await ingest_bom_lines_page(
@@ -64,24 +65,11 @@ async def process_bom_lines_page(conn: AsyncConnection, job: Job, fetch_page: Fe
             correlation_id=job.correlation_id,
         )
     except SchemaDriftDetected as drift_exc:
-        exception_record = await enqueue_exception(
-            conn,
-            source="etender",
-            exception_type="schema_drift",
-            category="needs_human",
-            reason=str(drift_exc),
-            correlation_id=job.correlation_id,
-            raw_ref=drift_exc.raw_snapshot_id,
-            contract_name=drift_exc.contract_name,
-        )
-        total_pages = payload.get("totalPages")
-        done = total_pages is not None and next_page >= total_pages
         return {
-            "next_page": next_page + 1,
-            "done": done,
+            **cursor,
             "tender_version_id": None,
             "boq_status": None,
-            "exception_queue_id": exception_record.id,
+            "exception_queue_id": await quarantine_schema_drift(conn, job, drift_exc, source="etender"),
             "boq_lines_stored": 0,
         }
 
@@ -106,12 +94,8 @@ async def process_bom_lines_page(conn: AsyncConnection, job: Job, fetch_page: Fe
         lines=lines,
     )
 
-    total_pages = payload.get("totalPages")
-    done = total_pages is not None and next_page >= total_pages
-
     return {
-        "next_page": next_page + 1,
-        "done": done,
+        **cursor,
         "tender_version_id": version.id,
         "boq_status": boq_status.status,
         "boq_lines_stored": boq_lines_stored,

@@ -6,7 +6,8 @@ exact missing pages instead of looking ambiguously unfinished."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import ETENDER_FIXTURES
 
 from packages.tender.boq_completeness import (
     get_or_create_boq_import,
@@ -15,11 +16,9 @@ from packages.tender.boq_completeness import (
 )
 from packages.tender.raw_snapshot import checksum_of
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 
 def _load(name: str) -> dict:
-    return json.loads((FIXTURES / name).read_bytes())
+    return json.loads((ETENDER_FIXTURES / name).read_bytes())
 
 
 async def test_real_pages_accumulate_counts_and_stay_in_progress(engine):
@@ -29,7 +28,7 @@ async def test_real_pages_accumulate_counts_and_stay_in_progress(engine):
         status = None
         for n in (1, 2, 3):
             payload = _load(f"event_355920_bomlines_page{n}.raw.json")
-            raw_body = (FIXTURES / f"event_355920_bomlines_page{n}.raw.json").read_bytes()
+            raw_body = (ETENDER_FIXTURES / f"event_355920_bomlines_page{n}.raw.json").read_bytes()
             status = await record_page_fetched(
                 conn,
                 source="etender",
@@ -46,7 +45,7 @@ async def test_real_pages_accumulate_counts_and_stay_in_progress(engine):
     assert status.expected_total == 4135
     assert status.expected_pages == 42
     assert status.status == "in_progress"
-    assert status.page_checksums["1"] == checksum_of((FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes())
+    assert status.page_checksums["1"] == checksum_of((ETENDER_FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes())
 
 
 async def test_status_becomes_complete_when_reconciliation_proven(engine):

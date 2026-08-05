@@ -6,33 +6,17 @@ as fixtures, no new live fetch needed."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import DESIGN_TENDER_QUERY_PARAMS, ETENDER_FIXTURES
 
 from packages.tender.etender_connector import ingest_design_tender_signals_page, ingest_procurement_plan_page
 from packages.tender.signals_store import detect_object_region_intersection
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
-DESIGN_QUERY_PARAMS = {
-    "EventType": "",
-    "PageSize": 10,
-    "EventStatus": 1,
-    "Keyword": "layihə",
-    "buyerOrganizationName": "",
-    "documentNumber": "",
-    "publishDateFrom": "",
-    "publishDateTo": "",
-    "AwardedparticipantName": "",
-    "AwardedparticipantVoen": "",
-    "DocumentViewType": "",
-    "IsArchived": False,
-}
-
 
 async def test_zaqatala_is_a_real_composite_intersection(engine):
-    design_raw = (FIXTURES / "design_tender_search_page1.raw.json").read_bytes()
+    design_raw = (ETENDER_FIXTURES / "design_tender_search_page1.raw.json").read_bytes()
     design_payload = json.loads(design_raw)
-    app_raw = (FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes()
+    app_raw = (ETENDER_FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes()
     app_payload = json.loads(app_raw)
 
     async with engine.begin() as conn:
@@ -40,7 +24,7 @@ async def test_zaqatala_is_a_real_composite_intersection(engine):
             conn,
             raw_body=design_raw,
             payload=design_payload,
-            query_params=DESIGN_QUERY_PARAMS,
+            query_params=DESIGN_TENDER_QUERY_PARAMS,
             correlation_id="corr-intersection-composite-1",
             observed_at="2026-08-05T12:00:00+00:00",
         )
@@ -65,7 +49,7 @@ async def test_siyezen_is_a_real_non_composite_object(engine):
     # Real fact: page1's only Siyəzən tender (event 356386) has no matching
     # procurement-plan fixture -- exactly one signal_type, the honest
     # negative case for P310's "intersection, not a single signal" bar.
-    design_raw = (FIXTURES / "design_tender_search_page1.raw.json").read_bytes()
+    design_raw = (ETENDER_FIXTURES / "design_tender_search_page1.raw.json").read_bytes()
     design_payload = json.loads(design_raw)
 
     async with engine.begin() as conn:
@@ -73,7 +57,7 @@ async def test_siyezen_is_a_real_non_composite_object(engine):
             conn,
             raw_body=design_raw,
             payload=design_payload,
-            query_params=DESIGN_QUERY_PARAMS,
+            query_params=DESIGN_TENDER_QUERY_PARAMS,
             correlation_id="corr-intersection-single-1",
             observed_at="2026-08-05T12:00:00+00:00",
         )

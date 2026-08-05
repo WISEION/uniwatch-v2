@@ -7,18 +7,16 @@ but for a drift inside `items` rather than at the page's top level."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
+from source_fixtures import ETENDER_FIXTURES
 from sqlalchemy import text
 
 from packages.tender.etender_connector import ingest_bom_lines_page
 from packages.tender.schema_drift import SchemaDriftDetected
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 
 def _load(name: str) -> tuple[bytes, dict]:
-    raw_body = (FIXTURES / name).read_bytes()
+    raw_body = (ETENDER_FIXTURES / name).read_bytes()
     return raw_body, json.loads(raw_body)
 
 

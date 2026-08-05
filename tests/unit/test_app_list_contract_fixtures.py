@@ -5,16 +5,15 @@ and for every plan item inside them."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import ETENDER_FIXTURES
 
 from packages.tender.etender_contract import APP_ITEM_CONTRACT, APP_LIST_PAGE_CONTRACT
 from packages.tender.schema_drift import detect_schema_drift, detect_schema_drift_over_items
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 
 def _load(name: str) -> dict:
-    return json.loads((FIXTURES / name).read_text())
+    return json.loads((ETENDER_FIXTURES / name).read_text())
 
 
 def test_page1_fixture_is_drift_free():

@@ -6,6 +6,7 @@ not a mutable current-state row."""
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,24 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .object_intersection import ObjectIntersection, detect_intersection
 from .signal_model import Signal
+
+_SIGNAL_COLUMNS = """id, signal_type, source, raw_snapshot_id, value, observed_at, ttl_class,
+                     confidence, object_customer, object_region, object_project_type, correlation_id"""
+
+SignalBuilder = Callable[..., Signal]
+
+
+async def _select_signals(conn: AsyncConnection, where: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = (await conn.execute(text(f"SELECT {_SIGNAL_COLUMNS} FROM signals {where}"), params)).mappings().all()
+    result = []
+    for row in rows:
+        row_dict = dict(row)
+        # asyncpg returns jsonb as a str; a psycopg-style driver already
+        # decodes it -- both are normalized to a dict here.
+        if isinstance(row_dict["value"], str):
+            row_dict["value"] = json.loads(row_dict["value"])
+        result.append(row_dict)
+    return result
 
 
 async def store_signal(conn: AsyncConnection, signal: Signal) -> int:
@@ -51,30 +70,26 @@ async def store_signal(conn: AsyncConnection, signal: Signal) -> int:
     ).scalar_one()
 
 
+async def build_and_store_signals(
+    conn: AsyncConnection,
+    items: Iterable[dict[str, Any]],
+    build: SignalBuilder,
+    *,
+    raw_snapshot_id: int,
+    observed_at: str,
+    correlation_id: str,
+) -> list[int]:
+    """Builds one Signal per item with `build` (a per-source pure builder,
+    see signal_model.py) and stores each, returning the ids in item order."""
+    signal_ids = []
+    for item in items:
+        signal = build(item, raw_snapshot_id=raw_snapshot_id, observed_at=observed_at, correlation_id=correlation_id)
+        signal_ids.append(await store_signal(conn, signal))
+    return signal_ids
+
+
 async def list_signals(conn: AsyncConnection, *, signal_type: str) -> list[dict[str, Any]]:
-    rows = (
-        (
-            await conn.execute(
-                text(
-                    """
-                    SELECT id, signal_type, source, raw_snapshot_id, value, observed_at, ttl_class,
-                           confidence, object_customer, object_region, object_project_type, correlation_id
-                    FROM signals WHERE signal_type = :signal_type ORDER BY id
-                    """
-                ),
-                {"signal_type": signal_type},
-            )
-        )
-        .mappings()
-        .all()
-    )
-    result = []
-    for row in rows:
-        row_dict = dict(row)
-        if isinstance(row_dict["value"], str):
-            row_dict["value"] = json.loads(row_dict["value"])
-        result.append(row_dict)
-    return result
+    return await _select_signals(conn, "WHERE signal_type = :signal_type ORDER BY id", {"signal_type": signal_type})
 
 
 async def list_signals_by_object_region(conn: AsyncConnection, *, object_region: str) -> list[dict[str, Any]]:
@@ -82,29 +97,9 @@ async def list_signals_by_object_region(conn: AsyncConnection, *, object_region:
     signals) primitive: every signal about one real object, across all
     signal_types, ordered by when it was observed -- unlike list_signals,
     which filters by type."""
-    rows = (
-        (
-            await conn.execute(
-                text(
-                    """
-                    SELECT id, signal_type, source, raw_snapshot_id, value, observed_at, ttl_class,
-                           confidence, object_customer, object_region, object_project_type, correlation_id
-                    FROM signals WHERE object_region = :object_region ORDER BY observed_at
-                    """
-                ),
-                {"object_region": object_region},
-            )
-        )
-        .mappings()
-        .all()
+    return await _select_signals(
+        conn, "WHERE object_region = :object_region ORDER BY observed_at", {"object_region": object_region}
     )
-    result = []
-    for row in rows:
-        row_dict = dict(row)
-        if isinstance(row_dict["value"], str):
-            row_dict["value"] = json.loads(row_dict["value"])
-        result.append(row_dict)
-    return result
 
 
 async def detect_object_region_intersection(conn: AsyncConnection, *, object_region: str) -> ObjectIntersection:

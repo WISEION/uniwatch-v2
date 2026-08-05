@@ -13,11 +13,10 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from packages.platform.exception_queue import enqueue_exception
 from packages.platform.jobs import Job
 
 from .etender_connector import ingest_design_tender_signals_page
-from .schema_drift import SchemaDriftDetected
+from .page_job import ingest_signal_page, page_cursor
 
 JOB_TYPE = "etender_design_tender_page_fetch"
 
@@ -32,8 +31,8 @@ async def process_design_tender_page(
 
     raw_body, payload = await fetch_page(query_params, next_page)
 
-    try:
-        signal_ids = await ingest_design_tender_signals_page(
+    async def ingest() -> list[int]:
+        return await ingest_design_tender_signals_page(
             conn,
             raw_body=raw_body,
             payload=payload,
@@ -41,28 +40,5 @@ async def process_design_tender_page(
             correlation_id=job.correlation_id,
             observed_at=observed_at,
         )
-    except SchemaDriftDetected as drift_exc:
-        exception_record = await enqueue_exception(
-            conn,
-            source="etender",
-            exception_type="schema_drift",
-            category="needs_human",
-            reason=str(drift_exc),
-            correlation_id=job.correlation_id,
-            raw_ref=drift_exc.raw_snapshot_id,
-            contract_name=drift_exc.contract_name,
-        )
-        total_pages = payload.get("totalPages")
-        return {
-            "next_page": next_page + 1,
-            "done": total_pages is not None and next_page >= total_pages,
-            "signal_ids": [],
-            "exception_queue_id": exception_record.id,
-        }
 
-    total_pages = payload.get("totalPages")
-    return {
-        "next_page": next_page + 1,
-        "done": total_pages is not None and next_page >= total_pages,
-        "signal_ids": signal_ids,
-    }
+    return await ingest_signal_page(conn, job, ingest, source="etender", cursor=page_cursor(next_page, payload.get("totalPages")))

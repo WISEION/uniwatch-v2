@@ -6,15 +6,14 @@ continues past it instead of crashing -- one bad page must not stall a
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
+from source_fixtures import ETENDER_FIXTURES
 from sqlalchemy import text
 
 from packages.platform.exception_queue import list_open
 from packages.platform.jobs import JobIdentity, JobStore
 from packages.tender.bom_lines_job import process_bom_lines_page
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
 LEASE_SECONDS = 30
 
 
@@ -33,7 +32,7 @@ def _identity(**overrides) -> JobIdentity:
 
 
 async def test_P305_drift_page_goes_to_exception_queue_and_pipeline_continues(engine):
-    raw_body = (FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
+    raw_body = (ETENDER_FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
     payload = json.loads(raw_body)
     drifted_payload = {**payload}
     del drifted_payload["totalItems"]  # simulate the source silently dropping a field
@@ -78,7 +77,7 @@ async def test_P305_drift_page_goes_to_exception_queue_and_pipeline_continues(en
 
 
 async def test_P305_repeated_drift_on_retry_does_not_duplicate_the_queue_entry(engine):
-    raw_body = (FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
+    raw_body = (ETENDER_FIXTURES / "event_355920_bomlines_page1.raw.json").read_bytes()
     payload = json.loads(raw_body)
     drifted_payload = {**payload}
     del drifted_payload["totalItems"]

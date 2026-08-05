@@ -17,10 +17,9 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from packages.platform.exception_queue import enqueue_exception
 from packages.platform.jobs import Job
 
-from .schema_drift import SchemaDriftDetected
+from .page_job import ingest_signal_page
 from .worldbank_connector import ingest_donor_pipeline_page
 
 JOB_TYPE = "worldbank_donor_pipeline_page_fetch"
@@ -37,8 +36,8 @@ async def process_worldbank_pipeline_page(
 
     raw_body, payload = await fetch_page(countrycode_exact, rows, next_os)
 
-    try:
-        signal_ids = await ingest_donor_pipeline_page(
+    async def ingest() -> list[int]:
+        return await ingest_donor_pipeline_page(
             conn,
             raw_body=raw_body,
             payload=payload,
@@ -46,28 +45,8 @@ async def process_worldbank_pipeline_page(
             correlation_id=job.correlation_id,
             observed_at=observed_at,
         )
-    except SchemaDriftDetected as drift_exc:
-        exception_record = await enqueue_exception(
-            conn,
-            source="worldbank_projects_api",
-            exception_type="schema_drift",
-            category="needs_human",
-            reason=str(drift_exc),
-            correlation_id=job.correlation_id,
-            raw_ref=drift_exc.raw_snapshot_id,
-            contract_name=drift_exc.contract_name,
-        )
-        total = int(payload["total"])
-        return {
-            "next_os": next_os + rows,
-            "done": next_os + rows >= total,
-            "signal_ids": [],
-            "exception_queue_id": exception_record.id,
-        }
 
-    total = int(payload["total"])
-    return {
-        "next_os": next_os + rows,
-        "done": next_os + rows >= total,
-        "signal_ids": signal_ids,
-    }
+    # Offset cursor, not a page number: this source pages by `os` (offset)
+    # and reports a total row count, so `done` compares offsets.
+    cursor = {"next_os": next_os + rows, "done": next_os + rows >= int(payload["total"])}
+    return await ingest_signal_page(conn, job, ingest, source="worldbank_projects_api", cursor=cursor)

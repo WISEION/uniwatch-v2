@@ -6,12 +6,11 @@ pagination."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
+
+from source_fixtures import ETENDER_FIXTURES
 
 from packages.platform.jobs import Job
 from packages.tender.procurement_plan_job import process_procurement_plan_page
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
 
 
 def _make_job(checkpoint: dict) -> Job:
@@ -34,14 +33,14 @@ def _make_job(checkpoint: dict) -> Job:
 
 
 async def test_page_fetch_failure_resumes_same_page_not_next(engine):
-    real_page = json.loads((FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes())
+    real_page = json.loads((ETENDER_FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes())
     attempts = []
 
     async def fetch_page(year, page_number, buyer_organization_name):
         attempts.append(page_number)
         if page_number == 1 and attempts.count(1) == 1:
             raise ConnectionError("simulated transient failure")
-        raw = (FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes()
+        raw = (ETENDER_FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes()
         return raw, json.loads(raw)
 
     async with engine.begin() as conn:
@@ -63,13 +62,13 @@ async def test_page_fetch_failure_resumes_same_page_not_next(engine):
 
 
 async def test_schema_drift_on_one_page_does_not_stall_pagination(engine):
-    real_page = json.loads((FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes())
+    real_page = json.loads((ETENDER_FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes())
     drifted_page = {**real_page, "unexpected_new_field": "drift"}
 
     async def fetch_page(year, page_number, buyer_organization_name):
         if page_number == 1:
             return json.dumps(drifted_page).encode(), drifted_page
-        raw = (FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes()
+        raw = (ETENDER_FIXTURES / "app_list_zaqatala_2026.raw.json").read_bytes()
         return raw, json.loads(raw)
 
     async with engine.begin() as conn:

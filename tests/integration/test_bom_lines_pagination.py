@@ -5,22 +5,20 @@ does not skip ahead on retry; a new job identity always starts at page 1."""
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
+from source_fixtures import ETENDER_FIXTURES
 from sqlalchemy import text
 
 from packages.platform.jobs import JobIdentity, JobStore
 from packages.tender.bom_lines_job import process_bom_lines_page
 from packages.tender.raw_snapshot import checksum_of
 
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
-
 LEASE_SECONDS = 30
 
 
 async def _load_page(event_id: int, page_number: int) -> tuple[bytes, dict]:
     assert event_id == 355920
-    raw_body = (FIXTURES / f"event_355920_bomlines_page{page_number}.raw.json").read_bytes()
+    raw_body = (ETENDER_FIXTURES / f"event_355920_bomlines_page{page_number}.raw.json").read_bytes()
     return raw_body, json.loads(raw_body)
 
 
@@ -119,7 +117,7 @@ async def test_page_fetch_failure_resumes_same_page_not_next(engine):
         )
     # Exactly one successful fetch of page 2 was recorded (not zero, not twice).
     assert boq_row["fetched_pages"] == 2
-    page2_body = (FIXTURES / "event_355920_bomlines_page2.raw.json").read_bytes()
+    page2_body = (ETENDER_FIXTURES / "event_355920_bomlines_page2.raw.json").read_bytes()
     page_checksums = boq_row["page_checksums"]
     if isinstance(page_checksums, str):
         page_checksums = json.loads(page_checksums)
