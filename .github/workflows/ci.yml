@@ -39,16 +39,19 @@ jobs:
       - name: unit tests
         run: python -m pytest tests/unit -q
 
-      # Contract-first sanity check (FR-PLT-01): the OpenAPI schema the app
+      # Contract-first sanity check (FR-PLT-01): the OpenAPI schema each app
       # actually serves must build without error. Does not need a DB --
-      # apps/api/main.py creates the engine lazily (see its module docstring).
-      - name: API schema validates
+      # both apps create their engine lazily (see apps/api_tender/main.py's
+      # and apps/api_vendor/main.py's module docstrings).
+      - name: API schemas validate (tender + vendor)
         run: |
           python -c "
-          from apps.api.main import app
-          schema = app.openapi()
-          assert schema['paths'], 'OpenAPI schema has no paths'
-          print(f\"OpenAPI OK: {len(schema['paths'])} path(s)\")
+          from apps.api_tender.main import app as tender_app
+          from apps.api_vendor.main import app as vendor_app
+          for name, app in [('tender', tender_app), ('vendor', vendor_app)]:
+              schema = app.openapi()
+              assert schema['paths'], f'{name} OpenAPI schema has no paths'
+              print(f'{name} OpenAPI OK: {len(schema[\"paths\"])} path(s)')
           "
 
       # Migration syntax (FR-PLT-12): every migrations/*.sql file must at

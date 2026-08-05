@@ -8,7 +8,7 @@ which the SQLAlchemy DBAPI layer does not support in one call.
 Rules enforced here, matching `migrations/README.md`:
 - The schema never changes as a side effect of application startup —
   `apply_all()` is only ever invoked by an explicit migration command/test
-  fixture, never by `apps/api/main.py` or `apps/worker/main.py`.
+  fixture, never by `apps/api_tender/main.py`, `apps/api_vendor/main.py`, or `apps/worker/main.py`.
 - `current_version()` only reads the ledger; startup uses it to fail fast
   on a version mismatch instead of auto-fixing the schema.
 - Migrations are idempotent to apply-if-not-applied: re-running `apply_all`
