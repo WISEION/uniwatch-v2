@@ -52,3 +52,44 @@ def test_null_value_does_not_count_as_drift_for_a_typed_field():
     payload = {**GOOD_PAYLOAD, "eventType": None}
     drift = detect_schema_drift(CONTRACT, payload)
     assert drift.has_drift is False
+
+
+def test_optional_field_absent_is_not_drift():
+    contract = SourceContract(
+        name="test.optional",
+        identity_query_keys=("id",),
+        fields=(
+            FieldSpec("id", "number"),
+            FieldSpec("nickname", "string", optional=True),
+        ),
+    )
+    drift = detect_schema_drift(contract, {"id": 1})
+    assert not drift.has_drift
+
+
+def test_required_field_absent_is_still_drift():
+    contract = SourceContract(
+        name="test.required",
+        identity_query_keys=("id",),
+        fields=(
+            FieldSpec("id", "number"),
+            FieldSpec("nickname", "string"),
+        ),
+    )
+    drift = detect_schema_drift(contract, {"id": 1})
+    assert drift.has_drift
+    assert drift.removed_fields == ("nickname",)
+
+
+def test_optional_field_present_with_wrong_type_is_still_drift():
+    contract = SourceContract(
+        name="test.optional_type",
+        identity_query_keys=("id",),
+        fields=(
+            FieldSpec("id", "number"),
+            FieldSpec("nickname", "string", optional=True),
+        ),
+    )
+    drift = detect_schema_drift(contract, {"id": 1, "nickname": 42})
+    assert drift.has_drift
+    assert drift.type_changed_fields == ("nickname",)

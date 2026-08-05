@@ -45,7 +45,8 @@ def detect_schema_drift(contract: SourceContract, actual_payload: dict) -> Schem
     declared_keys = set(declared.keys())
     actual_keys = set(actual_payload.keys())
 
-    removed = tuple(sorted(declared_keys - actual_keys))
+    missing_keys = declared_keys - actual_keys
+    removed = tuple(sorted(key for key in missing_keys if not declared[key].optional))
     added = tuple(sorted(actual_keys - declared_keys))
 
     type_changed = []

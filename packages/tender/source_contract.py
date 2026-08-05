@@ -13,6 +13,8 @@ from dataclasses import dataclass
 class FieldSpec:
     name: str
     type: str  # "string" | "number" | "boolean" | "null" | "array" | "object"
+    optional: bool = False  # True: the source is known to sometimes omit this key entirely
+    # (not the same as a present key whose value is null — see schema_drift.py's null-value rule).
 
 
 @dataclass(frozen=True)
