@@ -9,6 +9,7 @@ Tender / Vendor / Decision Intelligence for Unico QSC. Top-level navigation is e
 ## Locked decisions (not up for debate, PRD §13.1 D-ARCH/D-AUTH/D-DATA/D-P0)
 
 - Stack: React/TypeScript + Python/FastAPI + separate Python worker + PostgreSQL. Modular monolith. Separate repo/runtime at `C:\Users\orkha\Documents\UNIWatch-v2` (`NFR-ARC-01..06`).
+- **Amended 2026-08-05 (ADR-0006, PRD §2.2/D-ARCH amendment):** `tender` and `vendor` are no longer part of the same deployable — they are separate services (`apps/api-tender`, `apps/api-vendor`), each its own process, communicating only through a real API contract (`packages/contracts`, promoted from in-process DTOs to a versioned network contract). `decision`/`algorithm`/`platform` are unaffected — still modular-monolith, per ADR-0001 (now only partially superseded for the `tender`↔`vendor` pair).
 - Source: eTender, JSON-first, real data from the first vertical slice. Known contract facts: BOQ is complete on the API side (e.g. event 355920 → 4,135 BOM lines / 42 pages); the feed does **not** contain VÖEN or monetary values; the `EventType` filter is unreliable — the connector must validate actual response values, not trust request parameters (e.g. `EventType=2` returned `eventType=7`).
 - Vendors: **synthetic only** (watermark `SYNTHETIC`, deterministic seed, strict isolation from real data) until a separate legal gate.
 - Algorithm page: a versionable policy-graph builder with `Human` / `Rule` / `Gate` node types. ML is advisory-only and blocked until Phase 8.

@@ -373,3 +373,46 @@ path that can actually reach `etender.gov.az` (e.g. locally), not by the CI job'
 **Owner follow-up needed:** No, not blocking — decision already made and applied. If a self-hosted
 runner (or any CI environment with real network access to Azerbaijan-hosted government sites) becomes
 available later, revisit whether `live-fetch` should be promoted to a required check at that point.
+
+## 2026-08-05 — Tender/Vendor must be separate deployable services (customer requirement missed until now)
+
+**Context:** Development was paused this session (`docs/reports/DEVELOPMENT-PAUSED-2026-08-05.md`) when
+the owner recalled a hard customer requirement — Tender and Vendor must operate as fully separate
+tools (own process/deployment), communicating only through an API — that had never been recorded
+anywhere in this repo or the source documents. Checked against the actual PRD
+(`Uniwatch VER2/0_UNIWatch-v2-PRD-v1.0.md`) before assuming this was new: the real PRD v1.1 §2.2
+explicitly states the opposite as a non-goal ("Не построить микросервисную архитектуру на старте...
+модульный монолит"), and the master-plan/design doc name "microservice overengineering" as a named
+risk mitigated by the monolith. So this is not an error in this repo's reading of the PRD — ADR-0001
+was derived correctly from the PRD as it stood.
+
+**Deviation/assumption:** Owner confirmed (2026-08-05) this is a genuine new customer requirement,
+received after PRD v1.1 was approved, not previously written down anywhere — the PRD itself was
+outdated on this point. Owner asked that the PRD be corrected directly (done — see
+`Uniwatch VER2/0_UNIWatch-v2-PRD-v1.0.md`, three "Правка 2026-08-05" annotations: header, §2.2 non-goal,
+D-ARCH §13.1), while this repo's side (ADR, `docs/CONTEXT.md`) is handled here. Recorded as
+**ADR-0006** (`docs/adr/0006-tender-vendor-service-separation.md`), partially superseding ADR-0001 for
+the `tender`↔`vendor` boundary only — `decision`/`algorithm`/`platform` are unaffected.
+
+**Scope decided (owner-confirmed, not the heaviest possible interpretation):** "separate
+process/deployment communicating via API" — not necessarily separate databases, separate git
+repositories, or a full microservices platform (service mesh, service discovery). Concretely:
+`apps/api` splits into `apps/api-tender` + `apps/api-vendor` (two FastAPI processes); `packages/contracts`
+is promoted from in-process DTOs to a real versioned network API contract for this pair only.
+Chosen because `packages/vendor` is still an empty package (no code built against the old
+single-process assumption yet) — this is the cheapest possible moment to enforce the boundary, and a
+lighter interpretation avoids pre-committing to the still-unresolved `TBD-05` (infra budget) and
+`D-HOST` (hosting) questions.
+
+**Consequence that must not be silently dropped:** Database topology (shared PostgreSQL instance vs.
+separate DB/schema per service), per-service CI/CD pipelines, and service-to-service auth are
+explicitly **not decided** by ADR-0006 — left open, tied to `TBD-05`/`D-HOST`, not invented. Until
+those resolve, `apps/api-tender`/`apps/api-vendor` may share one PostgreSQL instance with only
+application-layer (not DB-user/schema-level) enforcement of per-service table ownership — a real,
+tracked gap. `apps/worker`'s own split (or not) is deferred until real vendor ingestion work starts.
+Implementing the `apps/api` split itself (into `apps/api-tender`/`apps/api-vendor`) is **not done by
+this entry** — it is the next schedulable task, needs its own plan before code changes.
+
+**Owner follow-up needed:** No further clarification needed to start the `apps/api` split — scope is
+decided. `TBD-05`/`D-HOST` still need the owner's research/approval gate before database/hosting
+topology can be finalized (unchanged from their pre-existing status in `docs/CONTEXT.md`).
