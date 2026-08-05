@@ -437,3 +437,31 @@ still open, tied to `TBD-05`/`D-HOST`. `apps/worker` was not touched by this imp
 
 **Owner follow-up needed:** No, not blocking. Real service-to-service auth and database-per-service
 topology remain future work once `D-IDP`/`D-HOST`/`TBD-05` resolve.
+
+## 2026-08-06 — Task 2.D: forecast card is an evidence chain gated on `is_composite`, not a real probability
+
+**Context:** `TENDER_INTELLIGENCE_SPEC.md` §5.4 (`P311`) specifies a forecast card gated on a ≥50%
+calibrated probability, with three probabilities (publish at all / in window / commercial
+attractiveness), a publication window, and a Next Best Action. Task 2.D
+(`docs/superpowers/plans/2026-08-05-phase2-task2d-forecast-card.md`) built only the real
+evidence-chain assembly (`packages/tender/forecast_card.py`, `signals_store.build_object_region_forecast_card`),
+gated on `is_composite` (task 2.C) instead.
+
+**Deviation/assumption:** `is_composite` — a real, non-fabricated boolean — substitutes for the spec's
+literal probability threshold, because no calibrated model exists (`TBD-TIS-02`) and none should be
+invented. Three probabilities, publication window, and Next Best Action are omitted entirely, not
+stubbed with a placeholder. `budget_estimate` and the evidence chain's "links" are real but
+incomplete: only `donor_pipeline_project` signals carry a monetary field (`total_amount_usd_text`) or a
+real URL; `design_tender`/`procurement_plan` signals carry neither — for those, `budget_estimate` is
+honestly `None` and each evidence entry's real, always-present "link" surrogate is its `raw_snapshot_id`,
+not a guessed URL. This is every real object found so far (Zaqatala included).
+
+**Consequence that must not be silently dropped:** a card produced by `build_object_region_forecast_card`
+is NOT the calibrated forecast §5.4 describes — it is a real evidence-chain view gated on a cruder,
+honest proxy. Any future UI/delivery work (§5.4's own "доставка" half, still unbuilt — weekly digest,
+urgent alert) must not present this card as if it carries a real confidence percentage or a real
+publication-window estimate — neither exists yet.
+
+**Owner follow-up needed:** Yes, non-blocking. `TBD-TIS-01`/`TBD-TIS-02` still need the owner's
+research/approval gate before real probabilities/tiers/windows can replace the `is_composite` proxy;
+weekly digest/alert delivery remains a separate, unscoped future task.

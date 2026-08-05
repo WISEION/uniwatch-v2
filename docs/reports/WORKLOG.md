@@ -542,3 +542,44 @@ followed it).
 **Блокеры:** нет новых. Non-blocking, recorded in `docs/decisions/OPEN-QUESTIONS.md`: `/internal/ping`'s
 lack of auth is a real, tracked gap for any *future* endpoint carrying real data, not this proof
 endpoint itself.
+
+## 2026-08-06 — Phase 2, task 2.D (tender): forecast card — real evidence chain only (trimmed scope)
+
+**Сделано:**
+- Plan `docs/superpowers/plans/2026-08-05-phase2-task2d-forecast-card.md` (writing-plans skill),
+  executed inline. Owner chose task 2.D next; scoped down before writing any code (confirmed with
+  owner) to just the real, non-fabricated slice of `TENDER_INTELLIGENCE_SPEC.md` §5.4: an evidence
+  chain, no probabilities/window/Next-Best-Action/delivery.
+- `packages/tender/forecast_card.py` — `ForecastCard` dataclass + `build_forecast_card()`, pure, no
+  DB/network (same shape as `object_intersection.py`). Returns `None` when the object is not
+  `is_composite` (task 2.C) — this substitutes for the real, still-missing probability threshold
+  (`TBD-TIS-02`) as an honest "card only at threshold" gate (`P311`), not a hidden shortcut.
+- `packages/tender/signals_store.py` — `build_object_region_forecast_card()`, composing
+  `list_signals_by_object_region` with the pure assembler, same shape as
+  `detect_object_region_intersection` (task 2.C).
+- **Proven on real data:** Zaqatala (the one real composite object from task 2.C — 4 `design_tender` +
+  10 `procurement_plan` signals = 14 total) gets a real evidence-chain card, `budget_estimate=None`
+  (honest — no `donor_pipeline_project` signal exists for this object, since task 2.C already found
+  zero real World Bank↔eTender overlap). Siyəzən (non-composite) gets no card — same real negative
+  case task 2.C proved, reused here. `budget_estimate` extraction itself (when a
+  `donor_pipeline_project` signal *is* present) is proven with a pure unit test using minimal synthetic
+  rows, not a fabricated "real" fixture claiming an overlap that doesn't exist.
+- Tests: `tests/unit/test_forecast_card.py` (3), `tests/integration/test_object_region_forecast_card_store.py` (2).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+265 passed, 33 skipped in 228.27s (0:03:48)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+195 files already formatted / All checks passed! / Success: no issues found in 62 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** task 2.D's evidence-chain slice is real and proven, but — same honest limitation as every
+prior slice this phase — only Zaqatala has real accumulated signals to show. Three probabilities,
+publication window, and Next Best Action remain blocked on `TBD-TIS-01`/`TBD-TIS-02`; delivery
+(weekly digest/alert) is unscoped future work. `budget_estimate`/evidence "links" are real but partial
+(only `donor_pipeline_project` signals carry a monetary field or URL) — recorded in
+`docs/decisions/OPEN-QUESTIONS.md`, not hidden.
+
+**Блокеры:** нет новых. Non-blocking: `TBD-TIS-01`/`TBD-TIS-02` still need the owner's research/approval
+gate before real probabilities/tiers/windows can replace the `is_composite` proxy this task uses.
