@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from .object_intersection import ObjectIntersection, detect_intersection
 from .signal_model import Signal
 
 
@@ -104,3 +105,14 @@ async def list_signals_by_object_region(conn: AsyncConnection, *, object_region:
             row_dict["value"] = json.loads(row_dict["value"])
         result.append(row_dict)
     return result
+
+
+async def detect_object_region_intersection(conn: AsyncConnection, *, object_region: str) -> ObjectIntersection:
+    """TENDER_INTELLIGENCE_SPEC.md §5.3 / P310's own definition of a real
+    forecast trigger -- an intersection of independent signal_types on one
+    object, not a single signal. Composes list_signals_by_object_region's
+    real accumulated rows with object_intersection.py's pure classifier;
+    does not itself assign a weak/medium/strong tier or apply TTL decay --
+    both remain blocked on TBD-TIS-02/TBD-TIS-01 (see OPEN-QUESTIONS.md)."""
+    rows = await list_signals_by_object_region(conn, object_region=object_region)
+    return detect_intersection(object_region, rows)
