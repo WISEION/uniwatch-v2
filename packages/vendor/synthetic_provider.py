@@ -4,11 +4,13 @@ producing anything but sandbox-realm, SYNTHETIC-watermarked data --
 data_realm/watermark are hardcoded here, never a parameter a caller could
 override (FR-VND-06, ADR-0004: "strict isolation, not a soft label").
 
-Determinism (FR-VND-02): `generate()` takes an explicit `seed` and an
-explicit `as_of` reference time -- it never calls `datetime.now()` or the
-module-level `random` singleton, so the same (seed, as_of) pair always
-produces byte-identical output, regardless of when or how many times it's
-called.
+Determinism (FR-VND-02): the `seed` is fixed at construction (this
+provider-specific config does not belong on the shared SupplyProvider
+contract -- see provider_contract.py); `generate()` takes an explicit
+`as_of` reference time -- neither call ever reaches for `datetime.now()`
+or the module-level `random` singleton, so the same (seed, as_of) pair
+always produces byte-identical output, regardless of when or how many
+times it's called.
 
 Covers all 7 of FR-VND-03's named adverse cases (`stale_offer`,
 `moq_conflict`, `mixed_uom`, `currency_vat_mismatch`, `capacity_shortfall`,
@@ -27,8 +29,11 @@ from .vendor_model import Offer, Vendor
 
 
 class SyntheticProvider:
-    def generate(self, *, seed: int, as_of: str) -> tuple[list[Vendor], list[Offer]]:
-        rng = random.Random(seed)
+    def __init__(self, *, seed: int) -> None:
+        self._seed = seed
+
+    def generate(self, *, as_of: str) -> tuple[list[Vendor], list[Offer]]:
+        rng = random.Random(self._seed)
         as_of_dt = datetime.fromisoformat(as_of)
 
         vendors: list[Vendor] = []
@@ -40,7 +45,7 @@ class SyntheticProvider:
                 watermark="SYNTHETIC",
                 name=name,
                 provider_type="synthetic",
-                seed=seed,
+                seed=self._seed,
             )
             vendors.append(vendor)
             return vendor
