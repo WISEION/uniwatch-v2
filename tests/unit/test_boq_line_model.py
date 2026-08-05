@@ -62,7 +62,7 @@ def test_defaults_to_normal_for_an_ordinary_line():
     # misclassified just because it mentions a device/cabinet.
     assert (
         classify_line_type(
-            "Əsas korpus - Elektrik təchizatı və güc avadanlıqı (Blok A1-A2)",  # noqa: RUF001
+            "Əsas korpus - Elektrik təchizatı və güc avadanlıqı (Blok A1-A2)",
             "Metal şkaf 800x600x250mm",
         )
         == "normal"
@@ -74,17 +74,17 @@ def test_classification_is_case_insensitive():
 
 
 def test_extracts_concrete_grade():
-    reqs = extract_spec_requirements("Beton B25 tökülməsi, qalınlığı 200mm")  # noqa: RUF001
+    reqs = extract_spec_requirements("Beton B25 tökülməsi, qalınlığı 200mm")
     assert SpecRequirement(kind="concrete_grade", raw_text="B25") in reqs
 
 
 def test_extracts_marka_style_concrete_grade():
-    reqs = extract_spec_requirements("Beton M300 markalı")  # noqa: RUF001
+    reqs = extract_spec_requirements("Beton M300 markalı")
     assert SpecRequirement(kind="concrete_grade", raw_text="M300") in reqs
 
 
 def test_extracts_standard_reference_azs():
-    reqs = extract_spec_requirements("AZS 1234-2020 standartına uyğun")  # noqa: RUF001
+    reqs = extract_spec_requirements("AZS 1234-2020 standartına uyğun")
     assert SpecRequirement(kind="standard_reference", raw_text="AZS 1234-2020") in reqs
 
 
@@ -117,14 +117,14 @@ def test_extracts_or_equivalent_english_phrase():
 def test_no_false_positive_on_a_plain_real_description():
     # Real description from event_355920_bomlines_page1.raw.json -- no
     # hidden spec requirement of any kind actually present in it.
-    reqs = extract_spec_requirements("Cihaz və ya aparatların quraşdırılması")  # noqa: RUF001
+    reqs = extract_spec_requirements("Cihaz və ya aparatların quraşdırılması")
     # "və ya" appears here but is NOT followed by "ekvivalent" -- must not
     # be flagged as or_equivalent just because "və ya" is present.
     assert reqs == ()
 
 
 def test_extracts_multiple_requirements_from_one_description():
-    reqs = extract_spec_requirements("Beton B30, AZS 5678 standartına uyğun, və ya ekvivalent")  # noqa: RUF001
+    reqs = extract_spec_requirements("Beton B30, AZS 5678 standartına uyğun, və ya ekvivalent")
     kinds = {r.kind for r in reqs}
     assert kinds == {"concrete_grade", "standard_reference", "or_equivalent"}
 
