@@ -427,3 +427,27 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** this is a **partial** foundation for task 2.C (object identity + accumulation for region only) — not the composite-trigger engine (§5.3's weak/medium/strong tiers), which still needs a second signal category sharing real objects with an existing one. The real unlock remains president.az/e-qanun.az reconnaissance (or another source naming the same rayons already seen in eTender data), not yet attempted with a working method.
 
 **Блокеры:** нет новых. Non-blocking: `_KNOWN_REGIONS` covers exactly 4 real observed regions — every other real Azerbaijan rayon/city will canonicalize to `None` until actually observed and added (recorded in `docs/decisions/OPEN-QUESTIONS.md`, not hidden).
+
+## 2026-08-05 — Phase 2, task 2.B (tender): signal ingestion — third source, annual procurement plans; first real cross-category intersection
+
+**Сделано:**
+- Plan `docs/superpowers/plans/2026-08-05-phase2-task2b-signal-ingestion-procurement-plans.md` (writing-plans skill), executed inline. Owner deprioritized president.az/e-qanun.az recon and asked to move to a different Phase 2 task; chose a third signal source (`TENDER_INTELLIGENCE_SPEC.md` §5.2's annual procurement plans) since it reuses eTender infrastructure entirely — no new external site, no new egress trust.
+- Real API found by **static analysis of eTender's own Angular bundle** (`main.f5154a38aaa91629.js`) rather than a live browser trace (browser extension unavailable this session): the `app-purchase-plans` component's `getData()` method literally calls `this.apiService.get('/app?PageSize=...&PageNumber=...&Year=...')`. Confirmed live 2026-08-05: `GET /api/app?Year=2026` alone returns `totalItems: 1413` across `totalPages: 142` (`PageSize=10`); `GET /api/app/years` lists valid years `2019`-`2027` (2027 already has real planning data). Two more real, confirmed-working endpoints found but deliberately not consumed by this task (per-plan N+1 call cost, scoped separately): `GET /api/app/{id}/versions` (a plan's real amendment history — the literal "changes to them" half of this signal category) and `GET /api/app-version/{id}/items` (real planned-purchase line items: `name`, `month`, `deliveryAddress`, `deliveryTime`, `eventType`).
+- `packages/tender/etender_contract.py` — `APP_LIST_PAGE_CONTRACT`/`APP_ITEM_CONTRACT`, with `identity_query_keys` covering `Year`/`PageNumber`/`BuyerOrganizationName` together from the start — this resource did not need the retrofit `EVENTS_LIST_PAGE_CONTRACT` needed after the fact.
+- `packages/tender/procurement_plan_signal.py` — `build_procurement_plan_signal()`, one `Signal` per plan *submission* (list endpoint only), reusing the existing `Signal` dataclass and `canonicalize_region()` unchanged. `ttl_class="procurement_plan"` (distinct from the other two eTender-derived slices' labels); `confidence="official_source"`.
+- `packages/tender/etender_connector.py` — `ingest_procurement_plan_page()` and `fetch_procurement_plan_page_live()`.
+- **The actual payoff, proven with 100% real captured data:** `tests/integration/test_procurement_plan_ingestion.py::test_real_cross_category_intersection_on_zaqatala` ingests a real design-tender page (`ZAQATALA RAYONU İCRA HAKİMİYYƏTİ`, 4 real signals) and a real procurement-plan page (`ZAQATALA RAYON GİGİYENA VƏ EPİDEMİOLOGİYA MƏRKƏZİ` and others, filtered live via `BuyerOrganizationName=ZAQATALA`, 10 real signals) into the same database, then confirms `list_signals_by_object_region(conn, object_region="Zaqatala")` returns both `signal_type`s. **This is the first genuine real cross-category object intersection this project has found** — the World Bank↔eTender check (2026-08-05, earlier entry) found none.
+- `packages/tender/procurement_plan_job.py` — resumable pagination, mirrors `design_tender_job.py`'s exact shape.
+- Tests: `tests/unit/test_app_list_contract_fixtures.py` (3), `tests/unit/test_procurement_plan_signal.py` (2), `tests/integration/test_procurement_plan_ingestion.py` (2, including the intersection proof), `tests/integration/test_procurement_plan_job.py` (2), `tests/security/test_procurement_plan_live_fetch.py` (1, real network request).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+244 passed, 33 skipped in 137.61s (0:02:17)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+174 files already formatted / All checks passed! / Success: no issues found in 54 source files / PASS: v1 untouched (v1 paths not present on this machine, baseline check skipped)
+```
+
+**Дальше:** task 2.B now has three real signal sources across three categories, with a real, proven cross-category intersection on one object (Zaqatala). Task 2.C's composite-trigger engine (§5.3's weak/medium/strong tiers) now has something genuine to build against — but only one real overlapping object found so far, and this task's own line-item/version endpoints (real richer content: what's being bought, when, delivered where) remain unconsumed. Natural next steps, not yet decided: build 2.C's actual intersection-detection logic against this one real case, or widen procurement-plan coverage (more regions, more years) to find more real overlaps first.
+
+**Блокеры:** нет новых. Non-blocking, recorded in `docs/decisions/OPEN-QUESTIONS.md`: `/api/app/{id}/versions` and `/api/app-version/{id}/items` remain real, unconsumed; `eventType` (line items) is an undecoded numeric code.

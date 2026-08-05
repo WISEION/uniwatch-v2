@@ -270,3 +270,33 @@ that worked for eTender's own list endpoint, has not been tried).
 
 **Owner follow-up needed:** No, not blocking. This is a sequencing note for whoever picks up task 2.C's
 composite-trigger work next, not a decision the owner needs to make now.
+
+## 2026-08-05 — Task 2.B third slice: procurement-plan versions/items unconsumed; found via static analysis, not a live trace
+
+**Context:** owner deprioritized president.az/e-qanun.az reconnaissance and asked for a different
+Phase 2 task instead. Chose a third signal source (annual procurement plans, `TENDER_INTELLIGENCE_SPEC.md`
+§5.2) since it lives on eTender itself. The real API was found by static analysis of eTender's own
+Angular bundle (grepping the minified JS for the component's actual `apiService.get(...)` call) rather
+than a live browser trace — the browser extension was unavailable this session. This resolved the
+earlier open item about needing "a live browser trace" for future eTender recon: static bundle analysis
+is a real, working alternative when the extension isn't available, at least for this Angular app.
+
+**Deviation/assumption:** two real endpoints found and deliberately not consumed:
+1. `GET /api/app/{id}/versions` — a procurement plan's real amendment history. This is the literal
+   "changes to them" half of `TENDER_INTELLIGENCE_SPEC.md` §5.2's category name; this task only
+   ingests the list endpoint (one signal per plan *submission*), not its amendments.
+2. `GET /api/app-version/{id}/items` — real planned-purchase line items (`name`, `month`,
+   `deliveryAddress`, `deliveryTime`, `eventType`). `deliveryAddress` would very plausibly give better
+   region-match precision than `organizationName` alone (some organization names don't name a region at
+   all), and `eventType` remains an undecoded numeric code.
+Both require one extra API call *per plan* (1413+ plans for 2026 alone) — a real scale/rate concern,
+not attempted speculatively in this task.
+
+**Consequence that must not be silently dropped:** a future reader must not assume "procurement-plan
+signals" captures amendments or planned-purchase detail — it captures exactly one fact per submission
+(who submitted a plan, for which year, when). The real cross-category intersection proven in this task
+(`test_real_cross_category_intersection_on_zaqatala`) is based on organization-name region matching
+only, which is coarser than what `deliveryAddress`-based matching could achieve later.
+
+**Owner follow-up needed:** No, not blocking. Real future-work items for whoever extends this signal
+source or works on task 2.C's composite-trigger detection.
