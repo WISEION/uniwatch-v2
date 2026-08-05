@@ -12,7 +12,7 @@ AS_OF = "2026-08-06T00:00:00+00:00"
 
 
 async def test_synthetic_generation_round_trips_through_the_database(engine):
-    vendors, offers = SyntheticProvider().generate(seed=7, as_of=AS_OF)
+    vendors, offers = SyntheticProvider(seed=7).generate(as_of=AS_OF)
 
     async with engine.begin() as conn:
         vendor_ids = {}
@@ -40,7 +40,7 @@ async def test_synthetic_generation_round_trips_through_the_database(engine):
 
 
 async def test_no_production_realm_rows_exist_after_a_synthetic_run(engine):
-    vendors, offers = SyntheticProvider().generate(seed=8, as_of=AS_OF)
+    vendors, offers = SyntheticProvider(seed=8).generate(as_of=AS_OF)
 
     async with engine.begin() as conn:
         vendor_ids = {}
