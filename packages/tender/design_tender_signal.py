@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .az_region_identity import canonicalize_region
 from .signal_model import Signal
 
 _DESIGN_TENDER_STEMS = ("layihə-smeta", "layihə smeta", "layihəsmeta", "layihələn", "layihələm")
@@ -65,11 +66,15 @@ def build_design_tender_signal(
         # first-party-official tier as the World Bank's own project API.
         confidence="official_source",
         object_customer=item.get("buyerOrganizationName"),
-        # eTender's events-list item has no structured region or
-        # project-category field -- both exist only as free text inside
-        # eventName (e.g. "Qəbələ şəhərində", "yolların əsaslı təmiri").
-        # Extracting either needs real gazetteer/NER work, not a guess.
-        object_region=None,
+        # eTender's events-list item has no structured region field --
+        # canonicalize_region() extracts one from the buyer name when it
+        # names a region this task has actually observed (e.g. a rayon
+        # executive authority); still honestly None for buyers that don't
+        # (e.g. a national utility) or that name an unobserved region --
+        # see az_region_identity.py's own docstring for why the list isn't
+        # exhaustive. object_project_type would need a separate real
+        # category-keyword taxonomy, not attempted here.
+        object_region=canonicalize_region(item.get("buyerOrganizationName", "")),
         object_project_type=None,
         correlation_id=correlation_id,
     )

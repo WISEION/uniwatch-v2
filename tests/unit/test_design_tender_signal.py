@@ -114,6 +114,21 @@ def test_build_design_tender_signal_from_real_open_tender():
     assert signal.object_project_type is None
 
 
+def test_build_design_tender_signal_canonicalizes_real_region():
+    item = {
+        "eventId": 356430,
+        "eventName": ("Nizami küçəsində yerləşən bağda abadlıq işləri ilə əlaqədar layihə smeta sənədlərinin hazırlanması"),
+        "buyerOrganizationName": "ZAQATALA RAYONU İCRA HAKİMİYYƏTİ.",
+        "publishDate": 1735689600000,
+        "awardedParticipantName": None,
+        "documentViewType": 1,
+    }
+    signal = build_design_tender_signal(
+        item, raw_snapshot_id=101, observed_at="2026-08-05T12:00:00+00:00", correlation_id="corr-design-3"
+    )
+    assert signal.object_region == "Zaqatala"
+
+
 def test_build_design_tender_signal_marks_awarded_when_participant_present():
     item = {
         "eventId": 111222,
