@@ -23,8 +23,8 @@ def test_same_seed_and_as_of_produce_identical_output():
 
 
 def test_different_seed_produces_different_price():
-    vendors_a, offers_a = SyntheticProvider().generate(seed=1, as_of=AS_OF)
-    vendors_b, offers_b = SyntheticProvider().generate(seed=2, as_of=AS_OF)
+    _vendors_a, offers_a = SyntheticProvider().generate(seed=1, as_of=AS_OF)
+    _vendors_b, offers_b = SyntheticProvider().generate(seed=2, as_of=AS_OF)
     normal_a = next(o for o in offers_a if o.adverse_case is None)
     normal_b = next(o for o in offers_b if o.adverse_case is None)
     assert normal_a.price != normal_b.price
