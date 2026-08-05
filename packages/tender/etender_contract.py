@@ -119,3 +119,39 @@ BOM_LINE_ITEM_CONTRACT = SourceContract(
         FieldSpec("categoryCode", "string"),
     ),
 )
+
+# Captured from fixtures/tender-snapshots/etender/app_list_page1_2026.raw.json and
+# app_list_zaqatala_2026.raw.json (task 2.B, procurement-plan signal slice). API discovered by static
+# analysis of eTender's Angular bundle (main.f5154a38aaa91629.js), not documentation -- confirmed live
+# 2026-08-05. Year/PageNumber/BuyerOrganizationName are all part of identity from the start (unlike
+# EVENTS_LIST_PAGE_CONTRACT, which had to be widened after the fact) -- a filtered and unfiltered page
+# for the same Year/PageNumber must not collide under the same identity_key.
+APP_LIST_PAGE_CONTRACT = SourceContract(
+    name="etender.app_list_page",
+    identity_query_keys=("Year", "PageNumber", "BuyerOrganizationName"),
+    fields=(
+        FieldSpec("currentPage", "number"),
+        FieldSpec("totalPages", "number"),
+        FieldSpec("pageSize", "number"),
+        FieldSpec("itemsInPage", "number"),
+        FieldSpec("totalItems", "number"),
+        FieldSpec("items", "array"),
+        FieldSpec("hasPreviousPage", "boolean"),
+        FieldSpec("hasNextPage", "boolean"),
+        FieldSpec("firstItem", "number"),
+        FieldSpec("lastItem", "number"),
+    ),
+)
+
+# Per-item shape inside APP_LIST_PAGE_CONTRACT's `items` array. Verified against every item across
+# both captured pages (see MANIFEST.md) -- identical key-set in both, no optional fields observed yet.
+APP_ITEM_CONTRACT = SourceContract(
+    name="etender.app_list_page.item",
+    identity_query_keys=("id",),
+    fields=(
+        FieldSpec("id", "number"),
+        FieldSpec("organizationName", "string"),
+        FieldSpec("year", "number"),
+        FieldSpec("createDate", "string"),
+    ),
+)
