@@ -74,3 +74,33 @@ async def list_signals(conn: AsyncConnection, *, signal_type: str) -> list[dict[
             row_dict["value"] = json.loads(row_dict["value"])
         result.append(row_dict)
     return result
+
+
+async def list_signals_by_object_region(conn: AsyncConnection, *, object_region: str) -> list[dict[str, Any]]:
+    """TENDER_INTELLIGENCE_SPEC.md §5.3's "накопленные сигналы" (accumulated
+    signals) primitive: every signal about one real object, across all
+    signal_types, ordered by when it was observed -- unlike list_signals,
+    which filters by type."""
+    rows = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT id, signal_type, source, raw_snapshot_id, value, observed_at, ttl_class,
+                           confidence, object_customer, object_region, object_project_type, correlation_id
+                    FROM signals WHERE object_region = :object_region ORDER BY observed_at
+                    """
+                ),
+                {"object_region": object_region},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    result = []
+    for row in rows:
+        row_dict = dict(row)
+        if isinstance(row_dict["value"], str):
+            row_dict["value"] = json.loads(row_dict["value"])
+        result.append(row_dict)
+    return result
