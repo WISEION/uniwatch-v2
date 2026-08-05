@@ -140,6 +140,7 @@ async def test_P303_connection_pins_first_resolved_address_rebind_does_not_reach
     assert target.resolved_ip == "8.8.8.8"  # but the already-validated target is unaffected
 
 
+@pytest.mark.live_network
 async def test_P304_legitimate_external_portal_fetches_successfully(engine):
     # Real network call to the same real, live source used throughout
     # tasks 1.A/1.B (etender.gov.az) -- proves the validator does not

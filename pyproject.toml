@@ -28,6 +28,9 @@ include = ["packages*", "apps*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+  "live_network: makes a real network call to a host confirmed unreachable from GitHub-hosted CI runners (etender.gov.az blocks TCP connects from GitHub Actions IP ranges, confirmed 2026-08-05 -- see docs/decisions/OPEN-QUESTIONS.md). Full gate excludes these; a separate non-blocking CI job runs them.",
+]
 
 [tool.ruff]
 line-length = 130

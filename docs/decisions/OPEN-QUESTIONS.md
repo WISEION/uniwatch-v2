@@ -330,3 +330,46 @@ freshness state will find neither here; it must not silently invent one either.
 research/approval gate (real TTL durations per `ttl_class`, and the `P310` backtest against ≥30
 already-published tenders) before tiers or decay can be built for real, per PRD §5.7.4/§13's existing
 TBD-resolution process.
+
+## 2026-08-05 — `etender.gov.az` confirmed unreachable from GitHub-hosted CI runners (not flaky)
+
+**Context:** GitHub branch protection on `master` was enabled this session (required "Fast gate"/"Full
+gate" status checks). The first PR (task 2.C) exposed that `Full gate` had actually been failing on
+every push to `master` for several prior commits (`gh run list --branch master` showed 5 consecutive
+`failure` runs) — invisible before because nothing blocked on it. All 3 failures were
+`TimeoutError: timed out` in `tests/security/test_design_tender_live_fetch.py`,
+`tests/security/test_procurement_plan_live_fetch.py`, and
+`tests/security/test_ssrf_suite.py::test_P304_legitimate_external_portal_fetches_successfully` — all
+three make a real network call to `etender.gov.az`.
+
+**Deviation/assumption:** added a temporary diagnostic CI step (since removed) to isolate DNS vs.
+TCP-connect vs. TLS. Real findings, from an actual GitHub Actions runner: DNS resolves fine
+(`etender.gov.az` → `5.191.247.17`, confirmed both via `getent` and Python's own resolver — the same
+path the app's egress validator uses); a control request to a different real host
+(`search.worldbank.org`) completed a full TLS handshake and got a real 200 response, so the runner's
+general internet egress works; but both `curl` to `etender.gov.az:443` and a raw TCP connect directly
+to the already-resolved IP (`5.191.247.17:443`, bypassing DNS entirely) timed out at the TCP-connect
+step, before TLS even started. Conclusion: `etender.gov.az` itself blocks (or blackholes) inbound TCP
+connections from GitHub Actions' IP ranges — a common pattern for government/regional sites blocking
+cloud-datacenter IP ranges — not a CI flake, not a code bug, and not fixable from this repo's CI
+config (a self-hosted runner with network egress from within Azerbaijan would be the only real fix,
+not attempted — out of scope for this project's current stage).
+
+**Resolution (owner-approved, "отдельный non-blocking job в том же workflow"):** the 3 affected tests
+are marked `@pytest.mark.live_network` (registered in `pyproject.toml`). `Full gate` now runs
+`pytest tests/ -q -m "not live_network"` (excludes them, so they can't block merge on a host this
+repo's CI genuinely cannot reach). A new `live-fetch` job in `.github/workflows/ci.yml` runs
+`pytest tests/ -q -m live_network` informationally — visible in every PR/push, but deliberately not a
+required status check, so a real regression in the egress/connector code is still surfaced to anyone
+running these locally (or from a network path that can actually reach the host) without permanently
+blocking every future PR. `tests/security/test_worldbank_live_fetch.py` (hits `search.worldbank.org`,
+confirmed reachable) is unaffected and stays in `Full gate`.
+
+**Consequence that must not be silently dropped:** `live-fetch`'s job will show red on essentially
+every PR/push from a GitHub-hosted runner — this is expected and not a signal of a real regression by
+itself. A real regression must be checked by running `pytest tests/ -m live_network -v` from a network
+path that can actually reach `etender.gov.az` (e.g. locally), not by the CI job's status alone.
+
+**Owner follow-up needed:** No, not blocking — decision already made and applied. If a self-hosted
+runner (or any CI environment with real network access to Azerbaijan-hosted government sites) becomes
+available later, revisit whether `live-fetch` should be promoted to a required check at that point.

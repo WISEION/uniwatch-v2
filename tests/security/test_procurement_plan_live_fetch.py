@@ -6,6 +6,8 @@ in this suite."""
 
 from __future__ import annotations
 
+import pytest
+
 from packages.platform.egress.registry import promote_to_trusted, register_source
 from packages.platform.egress.validator import EgressValidator
 from packages.tender.etender_connector import fetch_procurement_plan_page_live
@@ -16,6 +18,7 @@ async def _trust(conn, host: str) -> None:
     await promote_to_trusted(conn, host=host, scanner_run_reference="test-scan")
 
 
+@pytest.mark.live_network
 async def test_live_fetch_against_real_etender_procurement_plan_search(engine):
     async with engine.begin() as conn:
         await _trust(conn, "etender.gov.az")
