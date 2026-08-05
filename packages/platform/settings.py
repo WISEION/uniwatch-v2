@@ -9,15 +9,19 @@ import os
 from dataclasses import dataclass, field
 
 
+class MissingSetting(RuntimeError):
+    def __init__(self, name: str):
+        super().__init__(f"required environment variable {name} is not set")
+        self.name = name
+
+
 @dataclass(frozen=True)
 class Settings:
     # SQLAlchemy-style URL, used by the async engine (packages/platform/db.py).
-    database_url: str = field(
-        default_factory=lambda: os.environ.get(
-            "DATABASE_URL",
-            "postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch",
-        )
-    )
+    # Required: there is no built-in default, because a default URL ships
+    # credentials in source and silently points a misconfigured deployment at
+    # the wrong database instead of failing (AGENTS.md §2 rule 3).
+    database_url: str = field(default_factory=lambda: _required_env("DATABASE_URL"))
     # Version the running code was built for (FR-PLT-12 rule 2: startup
     # compares this against the ledger's current_version and refuses to
     # start on mismatch instead of auto-migrating).
@@ -33,6 +37,13 @@ class Settings:
         """Raw asyncpg DSN (no SQLAlchemy driver qualifier), for the
         migration runner which talks to Postgres directly."""
         return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+
+def _required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise MissingSetting(name)
+    return value
 
 
 def get_settings() -> Settings:

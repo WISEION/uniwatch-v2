@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from .correlation import CORRELATION_ID_HEADER, get_correlation_id_or_none
+
+logger = logging.getLogger("uniwatch.api")
 
 
 class ErrorDetail(BaseModel):
@@ -75,6 +79,10 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+        # The response body deliberately carries no exception detail (no
+        # stack trace, driver message, or SQL reaches the client); the
+        # correlation id is the only link, so the server side must log it.
+        logger.exception("unhandled error on %s %s", request.method, request.url.path)
         return _envelope_response(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             "internal_error",

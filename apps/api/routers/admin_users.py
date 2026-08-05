@@ -6,8 +6,8 @@ disable-not-delete + audit (FR-ADM-04/05) end to end over real HTTP.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -15,7 +15,7 @@ from packages.platform.audit import UserNotFound, disable_user, write_audit_log
 from packages.platform.concurrency import check_precondition
 from packages.platform.errors import ApiError
 from packages.platform.idempotency import IdempotencyKeyReused, IdempotencyStore, fingerprint
-from packages.platform.pagination import decode_cursor, encode_cursor
+from packages.platform.pagination import InvalidCursor, decode_cursor, encode_cursor
 from packages.platform.rbac.dependency import require_permission
 from packages.platform.rbac.models import Identity
 
@@ -25,20 +25,34 @@ router = APIRouter(prefix="/admin/users", tags=["admin-users"])
 
 _idempotency_store = IdempotencyStore()
 
+# Upper bound on a client-requested page size: an unbounded `limit` lets any
+# authenticated caller ask for the whole table in one query (FR-PLT-05).
+MAX_PAGE_SIZE = 100
 
+
+def _decode_after_id(cursor: str) -> int:
+    after_id = decode_cursor(cursor)[0]
+    if not isinstance(after_id, int):
+        raise InvalidCursor()
+    return after_id
+
+
+# Every free-text field is length-bounded: the columns behind them are
+# unbounded `TEXT`, so without this an authenticated caller can store
+# arbitrarily large values (audit rows included).
 class CreateUserRequest(BaseModel):
-    username: str
-    display_name: str
-    role_name: str
+    username: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=256)
+    role_name: str = Field(min_length=1, max_length=128)
 
 
 class UpdateUserRequest(BaseModel):
-    display_name: str | None = None
-    role_name: str | None = None
+    display_name: str | None = Field(default=None, min_length=1, max_length=256)
+    role_name: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class DisableUserRequest(BaseModel):
-    reason: str
+    reason: str = Field(min_length=1, max_length=1024)
 
 
 class UserResponse(BaseModel):
@@ -88,7 +102,7 @@ async def _load_user_row(conn: AsyncConnection, user_id: int) -> dict:
 @router.post("", response_model=UserResponse, status_code=201)
 async def create_user(
     body: CreateUserRequest,
-    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=255),
     conn: AsyncConnection = Depends(get_connection),
     identity: Identity = Depends(require_permission("admin.users.create", get_current_identity)),
 ) -> UserResponse:
@@ -143,11 +157,11 @@ async def create_user(
 @router.get("", response_model=UserListResponse)
 async def list_users(
     cursor: str | None = None,
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
     conn: AsyncConnection = Depends(get_connection),
     identity: Identity = Depends(require_permission("admin.users.read", get_current_identity)),
 ) -> UserListResponse:
-    after_id = decode_cursor(cursor)[0] if cursor else 0
+    after_id = _decode_after_id(cursor) if cursor else 0
     rows = (
         (
             await conn.execute(

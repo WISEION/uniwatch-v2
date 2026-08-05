@@ -52,7 +52,7 @@ python -m mypy packages apps
 python tools/check_v1_untouched.py
 ```
 
-`DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`; both have dev defaults.
+`DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://user:password@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`. `DATABASE_URL` is required and has no default — an unset value raises `MissingSetting` rather than silently falling back to a credentialed dev URL. `EXPECTED_SCHEMA_VERSION` defaults to the version the code was built for.
 
 ## Architecture
 

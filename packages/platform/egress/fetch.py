@@ -27,9 +27,17 @@ from .validator import EgressRejected, EgressValidator, ValidatedTarget
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 DEFAULT_MAX_REDIRECTS = 5
 DEFAULT_TIMEOUT_SECONDS = 15.0
+# A response body is remote, untrusted input: read at most this much so a
+# hostile or broken source cannot exhaust worker memory with an endless
+# stream (the largest real captured payload is orders of magnitude smaller).
+DEFAULT_MAX_BODY_BYTES = 32 * 1024 * 1024
 
 
 class TooManyRedirects(Exception):
+    pass
+
+
+class ResponseTooLarge(Exception):
     pass
 
 
@@ -60,7 +68,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 
 
 def _fetch_pinned_sync(
-    *, resolved_ip: str, host: str, port: int, scheme: str, path_and_query: str, timeout: float
+    *, resolved_ip: str, host: str, port: int, scheme: str, path_and_query: str, timeout: float, max_body_bytes: int
 ) -> tuple[int, bytes, dict[str, str]]:
     conn: http.client.HTTPConnection
     if scheme == "https":
@@ -74,7 +82,11 @@ def _fetch_pinned_sync(
             headers={"Accept": "application/json", "User-Agent": "uniwatch-v2-egress-validator/1"},
         )
         response = conn.getresponse()
-        body = response.read()
+        # One byte over the cap is read on purpose, so a body of exactly
+        # `max_body_bytes` is still accepted while a larger one is detected.
+        body = response.read(max_body_bytes + 1)
+        if len(body) > max_body_bytes:
+            raise ResponseTooLarge(f"{host} response body exceeds {max_body_bytes} bytes")
         headers = {k.lower(): v for k, v in response.getheaders()}
         return response.status, body, headers
     finally:
@@ -85,7 +97,7 @@ FetchFn = Callable[[ValidatedTarget], Awaitable[tuple[int, bytes, dict[str, str]
 
 
 async def default_do_fetch(
-    target: ValidatedTarget, *, timeout: float = DEFAULT_TIMEOUT_SECONDS
+    target: ValidatedTarget, *, timeout: float = DEFAULT_TIMEOUT_SECONDS, max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
 ) -> tuple[int, bytes, dict[str, str]]:
     return await asyncio.to_thread(
         _fetch_pinned_sync,
@@ -95,6 +107,7 @@ async def default_do_fetch(
         scheme=target.scheme,
         path_and_query=target.path_and_query,
         timeout=timeout,
+        max_body_bytes=max_body_bytes,
     )
 
 

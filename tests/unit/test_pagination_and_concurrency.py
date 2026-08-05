@@ -6,7 +6,7 @@ import pytest
 
 from packages.platform.concurrency import PreconditionFailed, check_precondition
 from packages.platform.idempotency import fingerprint
-from packages.platform.pagination import decode_cursor, encode_cursor
+from packages.platform.pagination import InvalidCursor, decode_cursor, encode_cursor
 
 
 def test_cursor_roundtrips_sort_key():
@@ -47,3 +47,21 @@ def test_fingerprint_is_stable_for_same_payload_regardless_of_key_order():
     a = {"title": "x", "deadline": "2026-09-01"}
     b = {"deadline": "2026-09-01", "title": "x"}
     assert fingerprint(a) == fingerprint(b)
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "not-base64!!",
+        "",
+        encode_cursor(()),
+        "eyJhIjogMX0=",  # base64 of a JSON object, not a list
+        "gA==",  # valid base64, invalid UTF-8
+        "W3RydWVd",  # base64 of [true] -- a bool is not a sort key value
+    ],
+)
+def test_malformed_cursor_is_a_400_not_a_500(cursor):
+    with pytest.raises(InvalidCursor) as exc:
+        decode_cursor(cursor)
+    assert exc.value.status_code == 400
+    assert exc.value.code == "invalid_cursor"

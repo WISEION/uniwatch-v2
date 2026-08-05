@@ -43,6 +43,10 @@ jobs:
       # actually serves must build without error. Does not need a DB --
       # apps/api/main.py creates the engine lazily (see its module docstring).
       - name: API schema validates
+        env:
+          # settings.py has no default DATABASE_URL (no credentials in source,
+          # no silent fallback), so importing the app needs one set.
+          DATABASE_URL: postgresql+asyncpg://ci:ci@127.0.0.1:5432/ci
         run: |
           python -c "
           from apps.api.main import app
