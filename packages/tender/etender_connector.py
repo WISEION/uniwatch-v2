@@ -16,7 +16,6 @@ one already-fetched page/response."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -26,20 +25,10 @@ from packages.platform import outbox
 from .etender_contract import BOM_LINE_ITEM_CONTRACT, BOM_LINES_PAGE_CONTRACT, EVENT_DETAILS_CONTRACT, EVENTS_LIST_PAGE_CONTRACT
 from .normalized import TenderVersion, create_normalized_version, get_or_create_tender
 from .raw_snapshot import save_raw_snapshot
-from .schema_drift import SchemaDrift, detect_schema_drift, detect_schema_drift_over_items
+from .schema_drift import SchemaDriftDetected, detect_schema_drift, detect_schema_drift_over_items
 from .source_contract import SourceContract, canonical_identity
 
 PARSER_VERSION = "etender-v1"
-
-
-@dataclass
-class SchemaDriftDetected(Exception):
-    drift: SchemaDrift
-    contract_name: str
-    raw_snapshot_id: int
-
-    def __str__(self) -> str:
-        return f"schema drift detected: {self.drift}"
 
 
 async def _ingest(

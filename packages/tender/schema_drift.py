@@ -77,3 +77,18 @@ def detect_schema_drift_over_items(item_contract: SourceContract, items: list[di
         removed_fields=tuple(sorted(removed)),
         type_changed_fields=tuple(sorted(type_changed)),
     )
+
+
+@dataclass
+class SchemaDriftDetected(Exception):
+    """A drift-free response is required to normalize (INT-02). Generic
+    across every source connector — carries which contract drifted and a
+    pointer to the raw evidence that was already saved before this raised,
+    so the caller can route it to the exception queue with a real raw_ref."""
+
+    drift: SchemaDrift
+    contract_name: str
+    raw_snapshot_id: int
+
+    def __str__(self) -> str:
+        return f"schema drift detected: {self.drift}"

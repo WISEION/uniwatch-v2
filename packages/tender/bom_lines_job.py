@@ -40,8 +40,9 @@ from packages.platform.jobs import Job
 from .boq_completeness import record_page_fetched
 from .boq_line_model import build_boq_lines
 from .boq_lines_store import store_boq_lines
-from .etender_connector import SchemaDriftDetected, ingest_bom_lines_page
+from .etender_connector import ingest_bom_lines_page
 from .raw_snapshot import checksum_of
+from .schema_drift import SchemaDriftDetected
 
 JOB_TYPE = "etender_bom_lines_page_fetch"
 

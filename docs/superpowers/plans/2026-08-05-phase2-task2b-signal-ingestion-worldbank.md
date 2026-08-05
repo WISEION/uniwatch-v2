@@ -1080,9 +1080,7 @@ async def ingest_donor_pipeline_page(
     correlation_id: str,
     observed_at: str,
 ) -> list[int]:
-    identity_key = canonical_identity(
-        DONOR_PIPELINE_PAGE_CONTRACT, {"countrycode_exact": "AZ", "os": str(os_)}
-    )
+    identity_key = canonical_identity(DONOR_PIPELINE_PAGE_CONTRACT, {"countrycode_exact": "AZ", "os": str(os_)})
 
     snapshot_id = await save_raw_snapshot(
         conn,
@@ -1146,10 +1144,15 @@ async def test_page_level_drift_saves_evidence_and_raises(engine):
     async with engine.begin() as conn:
         with pytest.raises(Exception) as exc_info:
             await ingest_donor_pipeline_page(
-                conn, raw_body=raw_body, payload=payload, os_=0,
-                correlation_id="corr-worldbank-drift", observed_at="2026-08-05T12:00:00+00:00",
+                conn,
+                raw_body=raw_body,
+                payload=payload,
+                os_=0,
+                correlation_id="corr-worldbank-drift",
+                observed_at="2026-08-05T12:00:00+00:00",
             )
         from packages.tender.schema_drift import SchemaDriftDetected
+
         assert isinstance(exc_info.value, SchemaDriftDetected)
         assert "unexpected_new_field" in exc_info.value.drift.added_fields
 
@@ -1157,6 +1160,7 @@ async def test_page_level_drift_saves_evidence_and_raises(engine):
         assert rows == []  # drift blocked signal storage, but evidence below was still saved
 
         from packages.tender.raw_snapshot import get_raw_snapshot
+
         snapshot = await get_raw_snapshot(conn, exc_info.value.raw_snapshot_id)
         assert snapshot.body["unexpected_new_field"] == "drift"
 ```
@@ -1204,11 +1208,20 @@ FIXTURES = Path("fixtures/tender-snapshots/worldbank")
 
 def _make_job(checkpoint: dict) -> Job:
     return Job(
-        id=1, job_type="worldbank_donor_pipeline_page_fetch", params={"countrycode_exact": "AZ", "rows": 10},
-        source="worldbank_projects_api", range_start=None, range_end=None,
-        contract_version="worldbank.donor_pipeline_page", correlation_id="corr-wb-job-1",
-        status="running", lease_owner="test-worker", attempt=1, max_attempts=5,
-        checkpoint=checkpoint, last_error=None,
+        id=1,
+        job_type="worldbank_donor_pipeline_page_fetch",
+        params={"countrycode_exact": "AZ", "rows": 10},
+        source="worldbank_projects_api",
+        range_start=None,
+        range_end=None,
+        contract_version="worldbank.donor_pipeline_page",
+        correlation_id="corr-wb-job-1",
+        status="running",
+        lease_owner="test-worker",
+        attempt=1,
+        max_attempts=5,
+        checkpoint=checkpoint,
+        last_error=None,
     )
 
 
@@ -1406,9 +1419,7 @@ async def test_live_fetch_against_real_worldbank_api(engine):
     async with engine.begin() as conn:
         await _trust(conn, "search.worldbank.org")
         validator = EgressValidator()
-        raw_body, payload = await fetch_donor_pipeline_page_live(
-            conn, validator, countrycode_exact="AZ", rows=1, os_=0
-        )
+        raw_body, payload = await fetch_donor_pipeline_page_live(conn, validator, countrycode_exact="AZ", rows=1, os_=0)
         assert payload["projects"]
         assert int(payload["total"]) >= 1
 ```
@@ -1444,10 +1455,7 @@ async def fetch_donor_pipeline_page_live(
     rows: int,
     os_: int,
 ) -> tuple[bytes, dict[str, Any]]:
-    url = (
-        f"https://search.worldbank.org/api/v2/projects?format=json"
-        f"&countrycode_exact={countrycode_exact}&rows={rows}&os={os_}"
-    )
+    url = f"https://search.worldbank.org/api/v2/projects?format=json&countrycode_exact={countrycode_exact}&rows={rows}&os={os_}"
     status, body, _headers = await fetch_via_validator(conn, validator, url)
     if status != 200:
         raise UnexpectedResponseStatus(f"World Bank Projects API returned HTTP {status} for {url!r}")

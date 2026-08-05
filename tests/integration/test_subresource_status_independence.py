@@ -9,7 +9,8 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from packages.tender.etender_connector import SchemaDriftDetected, ingest_bom_lines_page, ingest_event_details
+from packages.tender.etender_connector import ingest_bom_lines_page, ingest_event_details
+from packages.tender.schema_drift import SchemaDriftDetected
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "tender-snapshots" / "etender"
 
