@@ -23,9 +23,18 @@ async def test_synthetic_generation_round_trips_through_the_database(engine):
 
         rows = await list_offers_by_data_realm(conn, data_realm="vendor-sandbox")
 
-    assert len(rows) == 3
+    assert len(rows) == 8
     assert all(row["watermark"] == "SYNTHETIC" for row in rows)
-    assert {row["adverse_case"] for row in rows} == {None, "stale_offer", "moq_conflict"}
+    assert {row["adverse_case"] for row in rows} == {
+        None,
+        "stale_offer",
+        "moq_conflict",
+        "mixed_uom",
+        "currency_vat_mismatch",
+        "capacity_shortfall",
+        "expiring_evidence",
+        "partial_fulfillment",
+    }
     stale_row = next(row for row in rows if row["adverse_case"] == "stale_offer")
     assert stale_row["material"] == "cement-42.5"
 
