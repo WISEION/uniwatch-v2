@@ -300,3 +300,33 @@ only, which is coarser than what `deliveryAddress`-based matching could achieve 
 
 **Owner follow-up needed:** No, not blocking. Real future-work items for whoever extends this signal
 source or works on task 2.C's composite-trigger detection.
+
+## 2026-08-05 — Task 2.C: composite-trigger tiers and TTL decay remain unbuilt (blocked on TBD-TIS-01/02)
+
+**Context:** `TENDER_INTELLIGENCE_SPEC.md` §5.3's forecast engine needs weak/medium/strong confidence
+tiers and TTL-based decay ("frozen" object state) to be the "forecast" the spec describes. Task 2.C
+(`docs/superpowers/plans/2026-08-05-phase2-task2c-composite-trigger-intersection.md`) built only the
+literal intersection-detection fact (`detect_object_region_intersection`'s `is_composite` boolean +
+the real converged `signal_type` set), proven against the one real Zaqatala case.
+
+**Deviation/assumption:** tiers and decay are left unimplemented rather than approximated, because
+both require inventing a number for a `TBD-nn` placeholder, which `AGENTS.md` hard ban #2 forbids:
+- Tier thresholds (`TBD-TIS-02`): the spec's own text calls its illustrative ~30%/60%/85% figures "a
+  shape of the model, not calibrated thresholds", pending a backtest (`P310`) on ≥30 already-published
+  tenders. The tier *compositions* it names (e.g. weak = "program line + strategy mention") also
+  reference signal categories (decrees, budgets) this project has no source for yet, so there is no
+  honest way to map today's signal_type count onto a named tier.
+- TTL durations (`TBD-TIS-01`): `ttl_class` on a `Signal` is a label only (e.g. `"procurement_plan"`,
+  `"design_phase_tender"`) — no source document supplies a real expiry duration for any of them, so
+  "is this chain broken" can't be computed without inventing one.
+
+**Consequence that must not be silently dropped:** `detect_object_region_intersection` currently
+reports only a boolean (`is_composite`) and the raw set of converged `signal_type`s — it cannot yet
+say *how confident* a forecast is, or whether an old chain should be considered "frozen" rather than
+active. Any UI/delivery work (§5.4, task 2.D — the forecast card) that expects a probability or a
+freshness state will find neither here; it must not silently invent one either.
+
+**Owner follow-up needed:** Yes, non-blocking for now. `TBD-TIS-01`/`TBD-TIS-02` need the owner's
+research/approval gate (real TTL durations per `ttl_class`, and the `P310` backtest against ≥30
+already-published tenders) before tiers or decay can be built for real, per PRD §5.7.4/§13's existing
+TBD-resolution process.
