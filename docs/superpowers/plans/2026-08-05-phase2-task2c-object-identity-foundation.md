@@ -205,7 +205,7 @@ from .az_region_identity import canonicalize_region
 ```
 
 ```python
-        object_region=canonicalize_region(item.get("buyerOrganizationName", "")),
+object_region = (canonicalize_region(item.get("buyerOrganizationName", "")),)
 ```
 
 Update the docstring comment above that line (currently says "eTender's events-list item has no

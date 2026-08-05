@@ -242,3 +242,31 @@ deliberately did not attempt, not just a config change.
 **Owner follow-up needed:** No, not blocking. Both are real future-work items for whoever extends this
 signal source or builds the object graph (task 2.C) that needs finer-grained geography/category than
 this source alone provides.
+
+## 2026-08-05 — Task 2.C partial: World Bank↔eTender object overlap checked and ruled out; region gazetteer is real but narrow
+
+**Context:** before building any part of task 2.C (`TENDER_INTELLIGENCE_SPEC.md` §5.3, object graph +
+composite triggers), checked whether the two existing task 2.B signal sources already share a real
+object to intersect.
+
+**Deviation/assumption:** two findings recorded rather than acted on speculatively:
+1. Zero real overlap between all 147 real design/TEO tenders and all 32 real World Bank AZ agency
+   names, checked with fuzzy token matching. The two name matches that do exist by direct search
+   (`AZƏRSU`, `AZƏRENERJİ`) are tied to World Bank loans closed 19–31 years ago — treating that as a
+   composite forecast signal would be misleading, not a real prediction. This path is **not pursued
+   further** unless a *fresh* (non-`Closed`, non-`Dropped`) World Bank AZ project with a named agency
+   appears in a future capture.
+2. `az_region_identity.py`'s `_KNOWN_REGIONS` covers exactly 4 real observed regions (Zaqatala,
+   Siyəzən, Lerik, Naxçıvan) — every other real Azerbaijan rayon/city name will canonicalize to `None`
+   until it is actually observed in a captured buyer name and added. This is not an exhaustive
+   gazetteer and must not be treated as one.
+
+**Consequence that must not be silently dropped:** task 2.C's composite-trigger engine (§5.3's
+weak/medium/strong tiers) has no real cross-category object to prove itself against yet. The real
+unlock is a second signal source that names the same rayons already seen in eTender's design-tender
+data (a regional budget line or decree) — `president.az`/`e-qanun.az` reconnaissance remains open (a
+plain `WebFetch` attempt returned no usable page structure; a live-browser-trace attempt, the method
+that worked for eTender's own list endpoint, has not been tried).
+
+**Owner follow-up needed:** No, not blocking. This is a sequencing note for whoever picks up task 2.C's
+composite-trigger work next, not a decision the owner needs to make now.
