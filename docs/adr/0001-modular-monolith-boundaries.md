@@ -1,6 +1,8 @@
 # ADR-0001 — Modular monolith with enforced domain boundaries
 
-**Status:** Accepted
+**Status:** Accepted — **partially superseded 2026-08-05 by ADR-0006** for the `tender`↔`vendor`
+boundary specifically (now separate deployable services, not one process). Everything else in this
+ADR (`decision`/`algorithm`/`platform`, the general modular-monolith shape) is unchanged.
 **Date:** 2026-08-04
 **Requirements:** NFR-ARC-05, NFR-ARC-06, NFR-ARC-07, DM-01, INV-02, master plan §7.2/§7.3
 
