@@ -74,6 +74,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # TEMPORARY diagnostic (not a permanent CI step): tests/security's
+      # live-fetch tests to etender.gov.az have timed out on every recent
+      # push to master (see docs/reports/WORKLOG.md) -- isolating whether
+      # DNS, TCP connect, or TLS is where it actually hangs on a
+      # GitHub-hosted runner, and whether general internet egress works at
+      # all (control request to a known-reachable host), before deciding a
+      # real fix. Remove once root cause is known.
+      - name: DEBUG network reachability to etender.gov.az
+        run: |
+          echo "--- DNS (getent) ---"
+          getent hosts etender.gov.az || echo "getent FAILED"
+          echo "--- DNS (python, matches app's own resolver path) ---"
+          python3 -c "import socket; print(socket.getaddrinfo('etender.gov.az', 443))" || echo "python getaddrinfo FAILED"
+          echo "--- curl -v https://etender.gov.az (10s connect timeout, 20s max) ---"
+          curl -v --connect-timeout 10 --max-time 20 https://etender.gov.az/api/events/355920 || echo "curl to etender.gov.az FAILED (exit $?)"
+          echo "--- control: curl -v https://search.worldbank.org (known-working host) ---"
+          curl -v --connect-timeout 10 --max-time 20 "https://search.worldbank.org/api/v2/projects?format=json&countrycode_exact=AZ&rows=1" || echo "curl to worldbank FAILED (exit $?)"
+          echo "--- raw TCP connect test to the resolved IP seen in prior failures (5.191.247.17:443) ---"
+          timeout 10 bash -c "cat < /dev/null > /dev/tcp/5.191.247.17/443" && echo "raw TCP connect OK" || echo "raw TCP connect FAILED"
+
       - run: pip install -e ".[dev]"
 
       # tests/integration spins up its own Postgres via testcontainers,
