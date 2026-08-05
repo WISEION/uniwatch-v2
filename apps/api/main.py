@@ -43,4 +43,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+def __getattr__(name: str) -> FastAPI:
+    """`apps.api.main:app` stays the ASGI entrypoint, but the app (and with
+    it `get_settings()`, which requires `DATABASE_URL`) is built on first
+    attribute access rather than at import time — importing this module,
+    e.g. to reach `create_app` in a test, must not require the process
+    environment of a real deployment."""
+    if name == "app":
+        return create_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
