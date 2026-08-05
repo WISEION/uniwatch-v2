@@ -50,3 +50,61 @@ def test_normal_offer_has_no_adverse_case_and_is_not_stale_or_conflicted():
     as_of_dt = datetime.fromisoformat(AS_OF)
     assert datetime.fromisoformat(normal.valid_until) >= as_of_dt
     assert normal.moq <= normal.capacity
+
+
+def test_covers_mixed_uom_adverse_case():
+    _vendors, offers = SyntheticProvider().generate(seed=1, as_of=AS_OF)
+    mixed = next(o for o in offers if o.adverse_case == "mixed_uom")
+    # Quoted in a non-canonical unit (kg, not the material's canonical ton)
+    # -- uom_canonical_qty is a real conversion factor, not 1.0.
+    assert mixed.uom == "kg"
+    assert mixed.uom_canonical_qty != 1.0
+
+
+def test_covers_currency_vat_mismatch_adverse_case():
+    _vendors, offers = SyntheticProvider().generate(seed=1, as_of=AS_OF)
+    mismatch = next(o for o in offers if o.adverse_case == "currency_vat_mismatch")
+    assert mismatch.currency != "AZN"
+    assert mismatch.vat_rate != 18.0
+
+
+def test_covers_capacity_shortfall_adverse_case():
+    _vendors, offers = SyntheticProvider().generate(seed=1, as_of=AS_OF)
+    shortfall = next(o for o in offers if o.adverse_case == "capacity_shortfall")
+    # On-hand inventory exceeds ongoing supply capacity -- once depleted,
+    # replenishment lags behind (a real forward-looking constraint).
+    assert shortfall.inventory > shortfall.capacity
+
+
+def test_covers_expiring_evidence_adverse_case():
+    _vendors, offers = SyntheticProvider().generate(seed=1, as_of=AS_OF)
+    expiring = next(o for o in offers if o.adverse_case == "expiring_evidence")
+    as_of_dt = datetime.fromisoformat(AS_OF)
+    observed_at_dt = datetime.fromisoformat(expiring.observed_at)
+    # Still formally valid (unlike stale_offer)...
+    assert datetime.fromisoformat(expiring.valid_until) > as_of_dt
+    # ...but the evidence itself is more than 20 days old and should be re-verified.
+    assert (as_of_dt - observed_at_dt).days > 20
+
+
+def test_covers_partial_fulfillment_adverse_case():
+    _vendors, offers = SyntheticProvider().generate(seed=1, as_of=AS_OF)
+    partial = next(o for o in offers if o.adverse_case == "partial_fulfillment")
+    # On-hand inventory covers less than half of stated capacity.
+    assert partial.inventory < partial.capacity * 0.5
+
+
+def test_generates_exactly_one_normal_and_seven_distinct_adverse_offers():
+    _vendors, offers = SyntheticProvider().generate(seed=1, as_of=AS_OF)
+    assert len(offers) == 8
+    adverse_cases = {o.adverse_case for o in offers}
+    assert adverse_cases == {
+        None,
+        "stale_offer",
+        "moq_conflict",
+        "mixed_uom",
+        "currency_vat_mismatch",
+        "capacity_shortfall",
+        "expiring_evidence",
+        "partial_fulfillment",
+    }
