@@ -664,3 +664,41 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 "decision" half of `FR-VND-03` waits on 3.C/3.D matching/availability logic.
 
 **Блокеры:** нет новых.
+
+## 2026-08-06 — Phase 3, task 3.A (vendor): CSV provider — `FR-VND-04` satisfied (2 providers)
+
+**Сделано:**
+- Plan `docs/superpowers/plans/2026-08-06-phase3-task3a-csv-provider.md`, executed inline. Owner chose
+  to close the second-provider gap next.
+- **Real design fix first:** `SupplyProvider.generate(self, *, seed: int, as_of: str)` had accidentally
+  baked `SyntheticProvider`'s own need (a random seed) into the shared contract — a CSV parser has no
+  meaningful seed, forcing one onto it would be a dishonest leak. `seed` moved to
+  `SyntheticProvider.__init__(self, *, seed: int)`; the shared `SupplyProvider.generate(self, *, as_of:
+  str)` keeps only what every provider genuinely needs. Cheapest possible moment to fix — only one
+  provider and its own tests depended on the old shape (12 call sites in `tests/unit/test_synthetic_provider.py`,
+  2 in `tests/integration/test_vendor_store.py`, all updated).
+- `packages/vendor/csv_provider.py` — `CsvProvider`, parses a CSV price list into the same
+  `Vendor`/`Offer` shape `SyntheticProvider` produces; typed `CsvParseError` on a missing required
+  column or an invalid value (never a bare `csv`/`ValueError` leak). Still
+  `data_realm="vendor-sandbox"`/`watermark="SYNTHETIC"` — `ADR-0004`'s real-onboarding gate hasn't
+  opened, so every provider's output stays sandbox regardless of input shape. `FR-VND-04`'s "minimum
+  two providers in Phase 3" is now satisfied (synthetic + CSV).
+- The CSV schema used (12 columns) is this task's own invention — no real vendor CSV exists in this
+  session to match against; recorded as an honest limitation, not presented as a real export format.
+- Tests: `tests/unit/test_csv_provider.py` (5, new).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+289 passed, 33 skipped in 209.59s (0:03:29)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+209 files already formatted / All checks passed! / Success: no issues found in 67 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** `FR-VND-04` closed. `FR-VND-09` (route/service tenant isolation) and `FR-VND-03`'s
+"decision" half (3.C/3.D matching/availability logic) remain open from prior entries. Phase 3's
+synthetic-sandbox slice (task 3.A) is now reasonably complete for a first pass; natural next steps are
+3.B (reputation layer, needs Execution Ledger from Phase 4) or 3.C/3.D (availability/matching, can start
+against the sandbox data that now exists).
+
+**Блокеры:** нет новых.

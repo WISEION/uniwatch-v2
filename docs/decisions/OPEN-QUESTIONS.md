@@ -515,3 +515,25 @@ route/service isolation (recorded in task 3.A's own prior entry) are unaffected 
 
 **Owner follow-up needed:** No, not blocking. 3.C/3.D are the natural next Phase 3 work whenever the
 owner wants to pursue the "decision" half of `FR-VND-03` for real.
+
+## 2026-08-06 — `FR-VND-04` satisfied (2 providers): synthetic + CSV; CSV schema is invented, not real
+
+**Context:** `FR-VND-04` requires "минимум два провайдера в Phase 3." `CsvProvider`
+(`packages/vendor/csv_provider.py`) is now the second, alongside `SyntheticProvider`.
+
+**Deviation/assumption:** `CsvProvider`'s 12-column CSV schema
+(`vendor_name,material,price,currency,vat_rate,uom,uom_canonical_qty,moq,capacity,inventory,valid_from,valid_until`)
+is this task's own invention — no real vendor CSV export exists in this session to base it on. Also:
+`SupplyProvider`'s contract was changed (`seed` moved off the shared `generate()` method into
+`SyntheticProvider.__init__`) because the original shape was accidentally synthetic-specific — a real
+design correction, not a cosmetic rename.
+
+**Consequence that must not be silently dropped:** When a real vendor CSV export is eventually
+available (whenever real vendor onboarding starts), its actual column names/order/shape may not match
+`CsvProvider`'s invented schema — `CsvProvider` may need real changes then, not assumed to already fit.
+Anyone building a third provider (ERP/API/portal) should follow `SupplyProvider`'s current shape
+(`generate(self, *, as_of: str)`, provider-specific config in `__init__`), not the old
+`generate(seed, as_of)` shape task 3.A originally shipped.
+
+**Owner follow-up needed:** No, not blocking. Revisit `CsvProvider`'s schema once a real vendor CSV
+sample exists.
