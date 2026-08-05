@@ -215,3 +215,30 @@ in general; a future reader must not read "task 2.B closed" as "signal ingestion
 `etender.gov.az`) is an operational step that can happen independently of further development; the
 `confidence`/`object_region` design notes above are guidance for whoever builds the next signal source,
 not a decision the owner needs to make now.
+
+## 2026-08-05 — Task 2.B second slice (design/TEO tenders): EventStatus mapping and free-text extraction still open
+
+**Context:** per the owner's direction ("add a second signal source first"), a second `Signal` source
+was built (`docs/superpowers/plans/2026-08-05-phase2-task2b-signal-ingestion-design-tenders.md`):
+design/TEO tenders derived from eTender's own already-ingested events-list pages, no new external host.
+
+**Deviation/assumption:** two real, honest gaps carried forward rather than guessed at:
+1. `EventStatus`'s real value-to-meaning mapping was never decoded (only `EventStatus=1` = "open" is
+   known, from the 2026-08-04 follow-up session). Every real `design_tender` signal captured so far has
+   `is_awarded: False` because the search only covers open tenders — the spec's own worked example for
+   this category ("тендер на ТЭО выигран" = *won*, not just published) describes the stronger signal,
+   which needs a different, currently-unknown `EventStatus` value to search for.
+2. `object_region`/`object_project_type` are `None` for every `design_tender` signal — eTender's
+   events-list item has no structured field for either; both exist only as free text inside `eventName`
+   (Azerbaijani place names like "Qəbələ şəhərində", work-category phrases like "yolların əsaslı
+   təmiri"). Extracting either is real, valuable, unattempted work (a gazetteer of Azerbaijan
+   administrative regions, or a category-keyword taxonomy), not guessed at here.
+
+**Consequence that must not be silently dropped:** a future reader must not assume `is_awarded` will
+ever be `True` under the current search parameters, or that `object_region`/`object_project_type` are
+simply "not yet populated" in the sense of a TODO — they require new extraction logic this task
+deliberately did not attempt, not just a config change.
+
+**Owner follow-up needed:** No, not blocking. Both are real future-work items for whoever extends this
+signal source or builds the object graph (task 2.C) that needs finer-grained geography/category than
+this source alone provides.
