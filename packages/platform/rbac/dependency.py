@@ -1,5 +1,5 @@
 """Server-side permission check for every route/service (FR-ADM-02).
-`identity_dependency` is supplied by the caller (`apps/api/deps.py`) — this
+`identity_dependency` is supplied by the caller (`apps/api_tender/deps.py`) — this
 module stays agnostic of how identity is authenticated so it does not
 depend on any particular IdP (D-IDP is still open)."""
 

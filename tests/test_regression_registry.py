@@ -234,7 +234,7 @@ def test_P118_structured_observability_and_readiness():
     structured logs, liveness/readiness that reads (not writes) the ledger
     (NFR-OBS-01..03). Already implemented and tested: `packages/platform/
     correlation.py`, `packages/platform/logging.py`,
-    `apps/api/routers/health.py`,
+    `apps/api_tender/routers/health.py`, `apps/api_vendor/routers/health.py`,
     `tests/integration/test_correlation_propagation.py`,
     `tests/unit/test_logging.py`. CLOSED as a platform mechanism; metrics/
     traces (full NFR-OBS-02) are Phase 0.B+ continuity, not yet built."""
