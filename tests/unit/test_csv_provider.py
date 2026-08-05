@@ -46,7 +46,7 @@ def test_every_parsed_record_is_sandbox_realm_and_synthetic_watermarked():
 
 
 def test_evidence_source_and_observed_at_are_set_from_as_of():
-    vendors, offers = CsvProvider(csv_content=SAMPLE_CSV).generate(as_of=AS_OF)
+    _vendors, offers = CsvProvider(csv_content=SAMPLE_CSV).generate(as_of=AS_OF)
     assert all(o.evidence_source == "csv-upload" for o in offers)
     assert all(o.observed_at == AS_OF for o in offers)
     assert all(o.adverse_case is None for o in offers)
@@ -54,8 +54,7 @@ def test_evidence_source_and_observed_at_are_set_from_as_of():
 
 def test_empty_csv_content_produces_no_records():
     header_only = (
-        "vendor_name,material,price,currency,vat_rate,uom,uom_canonical_qty,"
-        "moq,capacity,inventory,valid_from,valid_until\n"
+        "vendor_name,material,price,currency,vat_rate,uom,uom_canonical_qty,moq,capacity,inventory,valid_from,valid_until\n"
     )
     vendors, offers = CsvProvider(csv_content=header_only).generate(as_of=AS_OF)
     assert vendors == []
