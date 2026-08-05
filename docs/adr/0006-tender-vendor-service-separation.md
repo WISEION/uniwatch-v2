@@ -29,6 +29,11 @@ with no code built against the old assumption, so there is nothing to migrate th
 - `apps/api` is split into two independently deployable FastAPI processes: **`apps/api-tender`** and
   **`apps/api-vendor`**. Each has its own process, own port, own startup/shutdown lifecycle — not two
   routers mounted on one app.
+
+  > **Naming note (2026-08-05, at implementation time):** the actual directories/import paths are
+  > `apps/api_tender` and `apps/api_vendor` (underscores) — Python package names cannot contain
+  > hyphens. The hyphenated form above refers to the deployable service name (process/image/deploy
+  > target), not the Python package path.
 - `packages/tender` code and `packages/vendor` code are never imported into each other's process. The
   existing ADR-0001 rule ("`packages/tender` never imports or queries `packages/vendor` internals
   directly — cross-domain data flows only through a typed contract in `packages/contracts` **or a

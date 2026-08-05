@@ -39,8 +39,9 @@ python tools/check_v1_untouched.py
 # first run on a machine where v1 is actually present, to record the baseline:
 python tools/check_v1_untouched.py --init
 
-# Run the API (dev)
-uvicorn apps.api.main:app --reload
+# Run the API (dev) -- two separate services (ADR-0006)
+uvicorn apps.api_tender.main:app --reload --port 8001
+uvicorn apps.api_vendor.main:app --reload --port 8002
 
 # Run the worker (dev)
 python -m apps.worker.main
@@ -56,19 +57,35 @@ python tools/check_v1_untouched.py
 
 ## Architecture
 
-**Modular monolith**: one repo, one runtime. Business logic lives in `packages/*`; `apps/{api,worker,web}` are thin entry points that only wire packages to HTTP/CLI/UI — no business logic in `apps/*`.
+**Modular monolith, except Tender/Vendor (ADR-0006):** `decision`/`algorithm`/`platform` still live in
+one repo, one runtime, per ADR-0001. `tender` and `vendor` are a deliberate exception, per a customer
+requirement surfaced 2026-08-05 (`docs/decisions/OPEN-QUESTIONS.md`, `docs/adr/0006-tender-vendor-service-separation.md`):
+they are two independently deployable FastAPI processes (`apps/api_tender`, `apps/api_vendor`),
+communicating only through a real network API contract in `packages/contracts` — never a shared
+in-process import or a shared-table read across that one boundary. Business logic lives in
+`packages/*`; `apps/*` are thin entry points that only wire packages to HTTP/CLI/UI — no business logic
+in `apps/*`.
 
 ```
 packages/platform    cross-cutting: db, migrations, RBAC, audit, correlation, errors, jobs, outbox
-                      — no domain scoring/business-decision logic
+                      — no domain scoring/business-decision logic; shared LIBRARY imported by both
+                      apps/api_tender and apps/api_vendor (not itself split into two services)
 packages/tender       tender ingestion, normalization, signals
 packages/vendor       vendor registry (synthetic-only until a legal gate) — no Bid/No-Bid knowledge
 packages/decision     Bid/No-Bid workflow, No-Go, outcomes — references immutable input *versions*, never a mutable copy
 packages/algorithm    policy graph / evaluation / approval — owns policy, not business facts
-packages/contracts    shared OpenAPI/DTO/schema contracts, the only sanctioned cross-package data path
-apps/api              FastAPI, contract-first (OpenAPI is the source of truth), request/response only
+packages/contracts    shared OpenAPI/DTO/schema contracts across apps/packages; for tender<->vendor
+                      specifically (ADR-0006) this is a real versioned network API contract, not just
+                      in-process DTOs — e.g. vendor_api.py, an httpx-based client with real
+                      timeout/error handling, not a function call
+apps/api_tender       FastAPI (Tender service), contract-first (OpenAPI is the source of truth),
+                      request/response only
+apps/api_vendor       FastAPI (Vendor service) — separate deployable process from api_tender
+                      (ADR-0006), not routers on the same app
 apps/worker           separate process for anything long-running: ingestion, BOQ processing,
-                      reconciliation, outbox consumers — never inside an apps/api request handler
+                      reconciliation, outbox consumers — never inside an apps/api_tender or
+                      apps/api_vendor request handler; not split by ADR-0006 (tender-scoped in
+                      practice today, vendor has no real jobs yet)
 ```
 
 Enforced import direction and domain boundaries: see `AGENTS.md` §3 and `docs/adr/0001-modular-monolith-boundaries.md` (this file already defers to `AGENTS.md` as normative, per "Read this first" above).
@@ -94,8 +111,12 @@ Layer 3 never writes itself as layer 4. Records also carry `data_origin` (`real`
 - `idempotency.py`, `pagination.py` (opaque cursor, no offset), `concurrency.py` (If-Match / optimistic concurrency → 409) — apply these to any new mutating/paginated/listing endpoint rather than hand-rolling equivalents.
 - `egress/` — every outbound HTTP call goes through `validator.py` first: scheme allowlist → `registry.py` trusted-source check → DNS resolve of *every* returned address (not just the first) → block loopback/private/link-local/metadata/CGNAT/reserved/multicast/unspecified (IPv4 and IPv6) → `fetch.py` connects to the already-checked address, never re-resolving the hostname (a TOCTOU/rebinding gap otherwise). Rejections raise typed `EgressRejected`, never a silent `None`. Do not call `httpx`/`aiohttp`/sockets directly from a connector — route through this.
 - `exception_queue.py` — generic durable queue for ingestion failures that need a human or a retry (schema drift, `EgressRejected`, stale-TTL facts); a job records into it rather than swallowing or re-raising past its retry budget.
+- `audit.py` — disable-not-delete + append-only audit trail: a user is disabled, never deleted, and every admin action is appended to an audit log rather than mutating history.
+- `proxy.py` — `resolve_verified_peer_ip()`: `X-Forwarded-For` is attacker-controlled unless the request's immediate TCP peer is a configured trusted-proxy CIDR; rate-limit/lockout decisions must resolve the verified peer IP through this rather than trusting the header directly.
 
-**Tender ingestion pipeline** (`packages/tender/`, spans several files): `raw_snapshot.py` saves the exact source bytes unconditionally and first — evidence capture must never depend on whether the connector currently understands the response shape. `schema_drift.py` then checks the payload against the frozen contract in `etender_contract.py`; a drift raises `SchemaDriftDetected` (`schema_drift.py`) and is reported via the outbox instead of being silently mapped. Only a drift-free response reaches `normalized.py`. Resumable multi-page pagination and BOQ page/row-total reconciliation live separately in `bom_lines_job.py` / `boq_completeness.py` — `etender_connector.py`'s `ingest_*` functions each handle exactly one already-fetched page/response and know nothing about pagination or completeness.
+**Tender ingestion pipeline** (`packages/tender/`, spans several files): `raw_snapshot.py` saves the exact source bytes unconditionally and first — evidence capture must never depend on whether the connector currently understands the response shape. `schema_drift.py` then checks the payload against a source's frozen contract (each connector defines its own — `etender_contract.py`, `worldbank_contract.py` — as a `SourceContract` from `source_contract.py`, whose `identity_query_keys` fixes which query params define a record's identity so it's never lost to a generic canonicalizer); a drift raises `SchemaDriftDetected` and is reported via the outbox instead of being silently mapped. Only a drift-free response reaches `normalized.py`. Each external source is a fully separate connector (`etender_connector.py`, `worldbank_connector.py`, more added per `TENDER_INTELLIGENCE_SPEC.md` §5.2 as tasks require) with its own resumable-pagination job mirroring the same shape (`design_tender_job.py`, `procurement_plan_job.py`, `worldbank_pipeline_job.py`) — a job's `ingest_*` function handles exactly one already-fetched page/response and knows nothing about pagination or completeness, which live separately (`bom_lines_job.py` / `boq_completeness.py` for BOQ page/row-total reconciliation).
+
+**Signal layer** (layer 3 of the four-layer model, built on top of normalized facts): each source has its own `Signal` builder (`signal_model.py`'s `build_donor_pipeline_signal`, `design_tender_signal.py`, `procurement_plan_signal.py`) — one builder per source, deliberately not a shared generic mapper, since fields differ too much between sources to stay honest under one abstraction. `signals_store.py` persists and queries them, including `list_signals_by_object_region()` for pulling every signal type against one real-world object. Cross-source object identity (needed for `TENDER_INTELLIGENCE_SPEC.md` §5.3's composite-trigger/intersection model) is resolved by `az_region_identity.py`'s `canonicalize_region()`, built only from region tokens actually observed in real captured data — never a hand-typed exhaustive list — so an unobserved region canonicalizes to `None` (surfaced, not guessed) rather than silently wrong.
 
 **Testing**: `tests/{unit,integration,contract,state,security,e2e,performance}` mirrors the CI gate split (`tests/README.md`) — `unit/` is pure logic (Fast gate); everything else needs real dependencies (Full gate). `tests/integration/conftest.py` spins up a session-scoped `testcontainers` Postgres container, gives each test a freshly dropped/recreated `public` schema, and applies all migrations before yielding an engine — Docker must be running locally to execute anything under `tests/integration/`.
 

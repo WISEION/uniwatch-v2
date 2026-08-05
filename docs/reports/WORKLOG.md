@@ -473,3 +473,72 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** the intersection-detection primitive is real and proven, but its real-world coverage is still exactly as thin as task 2.B left it — Zaqatala remains the only real composite object found so far. Widening procurement-plan/design-tender coverage (more regions, more years) to find more real overlaps, and the tier/TTL work blocked on `TBD-TIS-01`/`TBD-TIS-02`, both remain open. Separately, this session also set up GitHub branch protection on `master` (owner-applied via the GitHub UI: required "Fast gate"/"Full gate" status checks, enforced for admins too, force-push and branch deletion blocked) — confirmed working by a real rejected `git push origin master` (`GH013: 2 of 2 required status checks are expected`). Going forward, work lands on a branch and merges after CI passes, not via direct push to `master`.
 
 **Блокеры:** нет новых. Non-blocking, recorded in `docs/decisions/OPEN-QUESTIONS.md`: `TBD-TIS-01` (TTL durations)/`TBD-TIS-02` (confidence tier thresholds) still need the owner's research/approval gate before tiers or decay can be built for real.
+
+## 2026-08-05 — Architecture: ADR-0006 (Tender/Vendor service separation) discovered, decided, and implemented
+
+**Контекст:** Owner recalled a hard customer requirement — Tender and Vendor must be fully separate
+deployable tools communicating via API — never recorded anywhere, directly contradicting the locked
+ADR-0001 ("modular monolith, single deployable unit, no premature microservices"). Development was
+paused (`docs/reports/DEVELOPMENT-PAUSED-2026-08-05.md`) pending resolution.
+
+**Сделано (resolution + implementation, same session):**
+- Checked the real PRD (`Uniwatch VER2/0_UNIWatch-v2-PRD-v1.0.md`) before assuming a documentation gap
+  in this repo: it explicitly states the opposite as a non-goal ("не строить микросервисы на старте").
+  Confirmed with the owner this is a genuine *new* requirement received after PRD v1.1 was approved —
+  the PRD itself was outdated. PRD amended in place (three "Правка 2026-08-05" annotations: header,
+  §2.2 non-goal, D-ARCH §13.1) — owner's own action on the external client document, not this repo.
+- `docs/adr/0006-tender-vendor-service-separation.md` — new ADR: Tender and Vendor are separate
+  deployable FastAPI processes, communicating only through a real network API contract
+  (`packages/contracts`). ADR-0001 marked partially superseded (only for the `tender`↔`vendor` boundary
+  — `decision`/`algorithm`/`platform` unaffected). `docs/CONTEXT.md`'s "Locked decisions" updated.
+  Scope decided deliberately lighter than the heaviest possible reading: "own process/deployment," not
+  necessarily separate databases/git repos/CI pipelines — those stay tied to the already-open
+  `TBD-05`/`D-HOST`, not invented here.
+- **Implemented** (plan `docs/superpowers/plans/2026-08-05-apps-api-tender-vendor-split.md`, writing-plans
+  skill, executed inline): `apps/api` renamed to `apps/api_tender` (pure rename — there was no real
+  tender/vendor business-logic HTTP surface yet, only platform-level health/admin_users routes, so this
+  was mechanically light). New `apps/api_vendor` skeleton: own `main.py`/health router, plus exactly one
+  new real endpoint, `GET /internal/ping` (deliberately static — `{"service": "vendor", "status":
+  "ok"}` — not fabricated vendor data; deliberately unauthenticated, real service-to-service auth
+  deferred to `D-IDP`/`D-HOST`). `packages/contracts/vendor_api.py` — its first real code: a real
+  `httpx`-based network client (`ping_vendor_service`/`VendorPingResponse`/`VendorApiError`), not an
+  in-process function call, forwarding the caller's ambient correlation id as `X-Correlation-Id` (the
+  existing `CorrelationIdMiddleware` already reads that header on the receiving side — no changes
+  needed there, confirmed by reading its source before writing any new code).
+- **Proven twice, at two different levels:** `tests/unit/test_vendor_api_contract.py` (6 tests) proves
+  the client's own logic (success, ambient/explicit correlation id, three distinct failure modes —
+  non-200, malformed body, network error) against a mocked transport, no DB/app needed.
+  `tests/contract/test_tender_vendor_contract.py` (2 tests) — the first real test in this
+  previously-empty directory — proves the real `apps/api_vendor` app and the real client actually speak
+  the same schema over an ASGI-transport-backed HTTP round trip, **including real cross-service
+  correlation-id propagation** (the vendor app's own middleware echoes back the id the client sent,
+  proving it actually crossed the service boundary, not just a shared in-process ContextVar).
+- Updated all real and prose references to the old `apps/api` path: `.github/workflows/ci.yml` (Fast
+  gate's OpenAPI-schema-build step now validates both apps), `CLAUDE.md`, `AGENTS.md` §5, `docs/adr/0006-...md`
+  (added a naming footnote: actual package dirs are `api_tender`/`api_vendor` with underscores, Python
+  can't do hyphenated package names, ADR prose used hyphens loosely), `docs/operations/container-conventions.md`,
+  `packages/platform/migrations_runner.py`, `packages/platform/rbac/dependency.py`,
+  `tests/test_regression_registry.py` (docstring pointers only, no behavior change).
+- Tests: `tests/integration/test_api_vendor_health.py` (3, new), `tests/unit/test_vendor_api_contract.py`
+  (6, new), `tests/contract/test_tender_vendor_contract.py` (2, new) — plus the renamed/re-pathed
+  `tests/integration/test_api_tender_health.py` and `tests/integration/test_admin_users_api.py` (import
+  path only, behavior unchanged, both still fully passing).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+260 passed, 33 skipped in 101.58s (0:01:41)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+189 files already formatted / All checks passed! / Success: no issues found in 61 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** ADR-0006 is now fully implemented, not just decided — `apps/api_tender`/`apps/api_vendor`
+are real, separate processes with a real, proven network contract between them. Real service-to-service
+auth (the `/internal/ping` gap) and database/CI/CD topology remain open, tied to `D-IDP`/`D-HOST`/`TBD-05`
+— not attempted here, per ADR-0006's own explicit non-decisions. `docs/reports/DEVELOPMENT-PAUSED-2026-08-05.md`
+is now fully resolved (§7 there already recorded the decision; this entry is the implementation that
+followed it).
+
+**Блокеры:** нет новых. Non-blocking, recorded in `docs/decisions/OPEN-QUESTIONS.md`: `/internal/ping`'s
+lack of auth is a real, tracked gap for any *future* endpoint carrying real data, not this proof
+endpoint itself.
