@@ -32,3 +32,13 @@ async def test_readiness_ok_when_schema_matches(client):
     body = response.json()
     assert body["status"] == "ok"
     assert body["schema_version"] == 8
+
+
+async def test_internal_ping_is_unauthenticated_and_static(client):
+    # Deliberately unauthenticated (ADR-0006 defers real service-to-service
+    # auth to D-IDP/D-HOST) and deliberately static, not real vendor data
+    # (packages/vendor has no domain code yet) -- this endpoint exists only
+    # to prove the tender<->vendor API contract mechanism.
+    response = await client.get("/internal/ping")
+    assert response.status_code == 200
+    assert response.json() == {"service": "vendor", "status": "ok"}
