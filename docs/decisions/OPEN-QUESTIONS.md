@@ -494,3 +494,24 @@ beyond `apps/api_vendor`'s existing `/internal/ping` proof endpoint (ADR-0006).
 **Owner follow-up needed:** No, not blocking — the trimmed scope was the owner's own choice. Real
 vendor inputs and the OCR/ASR tooling choice for actual napkin ingestion, the second provider, the
 remaining adverse cases, and route-level isolation are all open future work, not urgent.
+
+## 2026-08-06 — `FR-VND-03` "represented" half done (7/7); "handled by an explicit decision" half is not
+
+**Context:** Follow-up to task 3.A. `SyntheticProvider` now represents all 7 of `FR-VND-03`'s named
+adverse cases (`stale_offer`, `moq_conflict`, `mixed_uom`, `currency_vat_mismatch`,
+`capacity_shortfall`, `expiring_evidence`, `partial_fulfillment`), up from 2.
+
+**Deviation/assumption:** `FR-VND-03`'s full acceptance criterion is "каждый случай представлен и
+обрабатывается решением явно" — represented AND handled by an explicit decision. Only the
+"represented" half is done. No code anywhere yet reads an `Offer.adverse_case` label and reacts to it
+(e.g. excluding a `stale_offer` from a match, discounting a `capacity_shortfall` vendor's availability
+status) — that decision logic belongs to task 3.C (Executable Availability, `INV-19` reputation
+weighting) and 3.D (BOQ↔SCG matching), neither started yet.
+
+**Consequence that must not be silently dropped:** Do not report `FR-VND-03` as fully closed in any
+future exit-gate/phase-summary — only the generator's representation half is real; the "decision" half
+is a genuine gap until 3.C/3.D exist. `FR-VND-04`'s second-provider requirement and `FR-VND-09`'s
+route/service isolation (recorded in task 3.A's own prior entry) are unaffected by this task, still open.
+
+**Owner follow-up needed:** No, not blocking. 3.C/3.D are the natural next Phase 3 work whenever the
+owner wants to pursue the "decision" half of `FR-VND-03` for real.

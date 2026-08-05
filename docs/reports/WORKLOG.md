@@ -631,3 +631,36 @@ vendor inputs the owner hasn't supplied in this session.
 
 **Блокеры:** нет новых. Non-blocking: real vendor artifacts (for napkin ingestion) and OCR/ASR tooling
 choice remain owner-dependent whenever that work starts.
+
+## 2026-08-06 — Phase 3, task 3.A (vendor): remaining 5 adverse cases — all 7/7 represented
+
+**Сделано:**
+- Plan `docs/superpowers/plans/2026-08-06-phase3-task3a-remaining-adverse-cases.md`, executed inline.
+  Owner chose to finish `FR-VND-03`'s adverse-case coverage next (over adding the second provider or
+  pausing).
+- `packages/vendor/synthetic_provider.py` extended with `mixed_uom` (quoted in kg, a real
+  `uom_canonical_qty` conversion factor instead of 1.0), `currency_vat_mismatch` (USD/0% VAT instead of
+  AZN/18%), `capacity_shortfall` (inventory > capacity — a forward-looking supply constraint, distinct
+  from `moq_conflict`'s own moq > capacity), `expiring_evidence` (still formally valid but `observed_at`
+  >20 days old), `partial_fulfillment` (inventory < capacity × 0.5). All 7 of `FR-VND-03`'s named
+  adverse cases are now represented, each isolated to one deliberate property so tests stay unambiguous.
+- **Important nuance recorded, not overclaimed:** `FR-VND-03`'s acceptance criterion is "каждый случай
+  представлен и обрабатывается решением явно" (represented AND handled by an explicit decision). This
+  task only closes the "represented" half — nothing downstream yet reacts to an `adverse_case` label;
+  that's task 3.C (Executable Availability)/3.D (matching) work, not yet started.
+- Tests: 6 new in `tests/unit/test_synthetic_provider.py` (now 12 total), `tests/integration/test_vendor_store.py`'s
+  round-trip proof updated for 8 offers / all 7 adverse_case labels.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+284 passed, 33 skipped in 227.44s (0:03:47)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+206 files already formatted / All checks passed! / Success: no issues found in 66 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** `FR-VND-03` is fully represented (7/7); `FR-VND-04`'s second-provider requirement and
+`FR-VND-09`'s route/service tenant isolation remain open from the prior task 3.A entry. The real
+"decision" half of `FR-VND-03` waits on 3.C/3.D matching/availability logic.
+
+**Блокеры:** нет новых.
