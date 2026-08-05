@@ -60,7 +60,9 @@ UNIWatch-v2/
     reports/               PLAN-MISSION-1.md, WORKLOG.md, PHASE-N-EXIT.md
     superpowers/plans/     working plans
   apps/
-    api/                   FastAPI — request/response only, no long external calls in-request
+    api_tender/            FastAPI (Tender service) — request/response only, no long external calls
+    api_vendor/            FastAPI (Vendor service, ADR-0006) — separate deployable process from
+                           api_tender, real API contract via packages/contracts, not a shared process
     worker/                separate Python worker — ingestion, jobs, outbox consumers
     web/                   React/TypeScript UI
   packages/

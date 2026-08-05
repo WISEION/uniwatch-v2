@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from packages.platform.errors import ApiError
 from packages.platform.migrations_runner import MigrationRunner
 
-logger = logging.getLogger("uniwatch.api.health")
+logger = logging.getLogger("uniwatch.api_tender.health")
 
 router = APIRouter(tags=["health"])
 
