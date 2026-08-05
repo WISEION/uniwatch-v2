@@ -28,9 +28,7 @@ async def test_ping_vendor_service_round_trip_against_the_real_vendor_app(engine
     assert result == VendorPingResponse(service="vendor", status="ok")
 
 
-async def test_ping_vendor_service_ambient_correlation_id_reaches_the_real_vendor_app_middleware(
-    engine, _database_url
-):
+async def test_ping_vendor_service_ambient_correlation_id_reaches_the_real_vendor_app_middleware(engine, _database_url):
     # Proves cross-service propagation end to end: the real
     # CorrelationIdMiddleware running inside the real vendor app echoes
     # back whatever correlation id it received on the response -- if the
@@ -46,8 +44,6 @@ async def test_ping_vendor_service_ambient_correlation_id_reaches_the_real_vendo
         await ping_vendor_service("http://vendor-test", client=client)
         # A second, direct call confirms what the middleware actually saw
         # and echoed for a request carrying that same ambient id.
-        response = await client.get(
-            "/internal/ping", headers={"X-Correlation-Id": "corr-cross-service-e2e-1"}
-        )
+        response = await client.get("/internal/ping", headers={"X-Correlation-Id": "corr-cross-service-e2e-1"})
 
     assert response.headers["X-Correlation-Id"] == "corr-cross-service-e2e-1"

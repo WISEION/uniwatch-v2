@@ -416,3 +416,24 @@ this entry** — it is the next schedulable task, needs its own plan before code
 **Owner follow-up needed:** No further clarification needed to start the `apps/api` split — scope is
 decided. `TBD-05`/`D-HOST` still need the owner's research/approval gate before database/hosting
 topology can be finalized (unchanged from their pre-existing status in `docs/CONTEXT.md`).
+
+## 2026-08-05 — ADR-0006 implemented: apps/api_tender + apps/api_vendor, real network contract proven
+
+**Context:** ADR-0006's split (recorded above) is now implemented (plan
+`docs/superpowers/plans/2026-08-05-apps-api-tender-vendor-split.md`) — `apps/api_tender`/`apps/api_vendor`
+are real, separate FastAPI processes with a real network contract (`packages/contracts/vendor_api.py`)
+between them, proven both against a mock transport and against the real vendor app end to end.
+
+**Deviation/assumption:** `GET /internal/ping` (the one real vendor endpoint proving the contract
+mechanism) is unauthenticated — no `D-IDP`-backed service-to-service auth exists yet, and building one
+speculatively for a proof endpoint with no real data would be scope creep beyond ADR-0006's own
+explicitly-deferred items.
+
+**Consequence that must not be silently dropped:** any *future* `/internal/*` or vendor-domain endpoint
+that carries real data must not copy this endpoint's unauthenticated pattern — it exists only because
+this endpoint returns a static, non-sensitive value. Also unchanged from ADR-0006: `apps/api_tender` and
+`apps/api_vendor` currently share one PostgreSQL instance with only application-layer table separation —
+still open, tied to `TBD-05`/`D-HOST`. `apps/worker` was not touched by this implementation either.
+
+**Owner follow-up needed:** No, not blocking. Real service-to-service auth and database-per-service
+topology remain future work once `D-IDP`/`D-HOST`/`TBD-05` resolve.
