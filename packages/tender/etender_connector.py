@@ -15,12 +15,16 @@ one already-fetched page/response."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlencode
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.platform import outbox
+from packages.platform.egress.fetch import fetch_via_validator
+from packages.platform.egress.validator import EgressValidator
 
 from .design_tender_signal import build_design_tender_signal, classify_design_tender
 from .etender_contract import BOM_LINE_ITEM_CONTRACT, BOM_LINES_PAGE_CONTRACT, EVENT_DETAILS_CONTRACT, EVENTS_LIST_PAGE_CONTRACT
@@ -207,3 +211,22 @@ async def ingest_design_tender_signals_page(
         )
         signal_ids.append(await store_signal(conn, signal))
     return signal_ids
+
+
+class UnexpectedResponseStatus(Exception):
+    pass
+
+
+async def fetch_design_tender_page_live(
+    conn: AsyncConnection,
+    validator: EgressValidator,
+    *,
+    query_params: dict[str, Any],
+    page_number: int,
+) -> tuple[bytes, dict[str, Any]]:
+    params = {**query_params, "PageNumber": page_number}
+    url = f"https://etender.gov.az/api/events?{urlencode(params)}"
+    status, body, _headers = await fetch_via_validator(conn, validator, url)
+    if status != 200:
+        raise UnexpectedResponseStatus(f"eTender events search returned HTTP {status} for {url!r}")
+    return body, json.loads(body)
