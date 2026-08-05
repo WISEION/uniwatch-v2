@@ -22,10 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.platform import outbox
 
+from .design_tender_signal import build_design_tender_signal, classify_design_tender
 from .etender_contract import BOM_LINE_ITEM_CONTRACT, BOM_LINES_PAGE_CONTRACT, EVENT_DETAILS_CONTRACT, EVENTS_LIST_PAGE_CONTRACT
 from .normalized import TenderVersion, create_normalized_version, get_or_create_tender
 from .raw_snapshot import save_raw_snapshot
 from .schema_drift import SchemaDriftDetected, detect_schema_drift, detect_schema_drift_over_items
+from .signals_store import store_signal
 from .source_contract import SourceContract, canonical_identity
 
 PARSER_VERSION = "etender-v1"
@@ -181,3 +183,27 @@ async def ingest_events_list_page(
         normalize_fields=normalize_fields,
         correlation_id=correlation_id,
     )
+
+
+async def ingest_design_tender_signals_page(
+    conn: AsyncConnection,
+    *,
+    raw_body: bytes,
+    payload: dict[str, Any],
+    query_params: dict[str, Any],
+    correlation_id: str,
+    observed_at: str,
+) -> list[int]:
+    version = await ingest_events_list_page(
+        conn, raw_body=raw_body, payload=payload, query_params=query_params, correlation_id=correlation_id
+    )
+
+    signal_ids = []
+    for item in payload["items"]:
+        if not classify_design_tender(item["eventName"]):
+            continue
+        signal = build_design_tender_signal(
+            item, raw_snapshot_id=version.raw_snapshot_id, observed_at=observed_at, correlation_id=correlation_id
+        )
+        signal_ids.append(await store_signal(conn, signal))
+    return signal_ids
