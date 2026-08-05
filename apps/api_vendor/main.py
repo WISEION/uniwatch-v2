@@ -16,7 +16,7 @@ from packages.platform.errors import install_error_handlers
 from packages.platform.logging import configure_logging
 from packages.platform.settings import Settings, get_settings
 
-from .routers import health
+from .routers import health, internal
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -39,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(CorrelationIdMiddleware)
     install_error_handlers(app)
     app.include_router(health.router)
+    app.include_router(internal.router)
     return app
 
 
