@@ -1,5 +1,5 @@
 """World Bank Projects API donor-pipeline ingestion (INT-01, INT-02,
-FR-TND-10, TENDER_INTELLIGENCE_SPEC.md §5.2). Raw evidence is captured
+FR-TND-10, TENDER_INTELLIGENCE_SPEC.md §5.2, P309). Raw evidence is captured
 unconditionally, before the drift check -- same discipline as
 etender_connector.py's `_ingest`. Unlike that connector, a successful
 ingest here produces *N* signal rows (one per project in the page), not

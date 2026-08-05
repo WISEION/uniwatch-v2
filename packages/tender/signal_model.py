@@ -1,5 +1,6 @@
-"""Signal fact model (INV-15, INV-16, INV-17): pure assembly, no DB, no
-network -- mirrors boq_line_model.py's "pure model assembly" shape from
+"""Signal fact model (INV-15, INV-16, INV-17, TENDER_INTELLIGENCE_SPEC.md
+§5.2, P309): pure assembly, no DB, no network -- mirrors
+boq_line_model.py's "pure model assembly" shape from
 task 2.A. `build_donor_pipeline_signal` is the one concrete builder this
 task needs; a future signal source gets its own builder function, not a
 change to this one (each source's fields differ too much for one generic

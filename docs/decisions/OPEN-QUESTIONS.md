@@ -180,3 +180,38 @@ cover this; it is a silent-until-flagged gap in the classifier's recall, not its
 line types (or confirm English-only is acceptable because BOQ documents on this source are bilingual/English
 in practice for these specific line types) before Phase 2.C (forecast engine) or any matching/costing logic
 starts relying on `line_type` for anything beyond the English-labeled real-world cases proven so far.
+
+## 2026-08-05 — Task 2.B: signal ingestion closed for exactly one source (World Bank donor pipeline)
+
+**Context:** `TENDER_INTELLIGENCE_SPEC.md` §5.2 names six signal source categories (budgets/investment
+programs; presidential/cabinet decrees via president.az/e-qanun.az; donor pipelines WB/ADB/EBRD/AIIB;
+TEO/design tenders; annual procurement plans and their changes; customer vacancies/appointments). Task
+2.B (`docs/superpowers/plans/2026-08-05-phase2-task2b-signal-ingestion-worldbank.md`) built the generic
+`Signal` fact model (`INV-15`/`INV-16`/`INV-17`, new invariants this task is the first to implement) and
+proved it against exactly one real, live source: the World Bank Projects API
+(`https://search.worldbank.org/api/v2/projects`), one genuine instance of the "donor pipelines" category.
+
+**Deviation/assumption:** three choices made without a source document dictating the exact answer:
+1. `confidence` on `Signal` is a qualitative provenance tier (`"official_source"`, fixed for this one
+   connector), not a calibrated probability — that remains `TBD-TIS-02` (task 2.C, built from *multiple*
+   signals). A future source with less structural certainty (e.g. a decree scraped from e-qanun.az, or a
+   voice-note tip per `INV-18`) needs its own tier; `"official_source"` must not become a silent default
+   confidence for every future connector.
+2. `object_region` for this connector is country-level only (`"Republic of Azerbaijan"`) — the World
+   Bank's public Projects API does not expose sub-national geography for Azerbaijan projects. A future
+   signal source with real regional granularity should not be forced into this same coarseness by
+   precedent.
+3. `search.worldbank.org`'s trusted-source registration used in `tests/security/test_worldbank_live_fetch.py`
+   is test-scoped (`scanner_run_reference="test-scan"`) — same precedent as `etender.gov.az`'s own
+   test-only trust in `tests/security/test_ssrf_suite.py`. Production trust for either host (a real
+   scanner run, a real security review) is a still-open operational decision, not resolved by either task.
+
+**Consequence that must not be silently dropped:** the other five `TENDER_INTELLIGENCE_SPEC.md` §5.2
+signal categories, and the other three donor institutions (ADB/EBRD/AIIB), remain entirely unstarted — no
+phase/task document assigns them individually yet. `P309` is proven for one source, not for the category
+in general; a future reader must not read "task 2.B closed" as "signal ingestion is done."
+
+**Owner follow-up needed:** No, not blocking. Confirming production trust for `search.worldbank.org` (or
+`etender.gov.az`) is an operational step that can happen independently of further development; the
+`confidence`/`object_region` design notes above are guidance for whoever builds the next signal source,
+not a decision the owner needs to make now.
