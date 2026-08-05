@@ -161,6 +161,7 @@ async def ingest_events_list_page(
     *,
     raw_body: bytes,
     payload: dict[str, Any],
+    query_params: dict[str, Any],
     correlation_id: str,
 ) -> TenderVersion:
     def normalize_fields(p: dict[str, Any]) -> dict[str, Any]:
@@ -174,7 +175,7 @@ async def ingest_events_list_page(
     return await _ingest(
         conn,
         contract=EVENTS_LIST_PAGE_CONTRACT,
-        identity_params={"PageNumber": payload["currentPage"]},
+        identity_params={**query_params, "PageNumber": payload["currentPage"]},
         raw_body=raw_body,
         payload=payload,
         normalize_fields=normalize_fields,

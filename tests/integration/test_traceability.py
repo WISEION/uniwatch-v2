@@ -61,10 +61,24 @@ async def test_bom_lines_version_traces_to_its_exact_raw_bytes(engine):
 
 async def test_events_list_version_traces_to_its_exact_raw_bytes(engine):
     raw_body = _load_bytes("events_list_page1.raw.json")
+    query_params = {
+        "EventType": "",
+        "PageSize": 6,
+        "EventStatus": 1,
+        "Keyword": "",
+        "buyerOrganizationName": "",
+        "documentNumber": "",
+        "publishDateFrom": "",
+        "publishDateTo": "",
+        "AwardedparticipantName": "",
+        "AwardedparticipantVoen": "",
+        "DocumentViewType": "",
+        "IsArchived": False,
+    }
 
     async with engine.begin() as conn:
         version = await ingest_events_list_page(
-            conn, raw_body=raw_body, payload=json.loads(raw_body), correlation_id="corr-trace-3"
+            conn, raw_body=raw_body, payload=json.loads(raw_body), query_params=query_params, correlation_id="corr-trace-3"
         )
 
     async with engine.begin() as conn:

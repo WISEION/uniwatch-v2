@@ -117,6 +117,22 @@ async def test_ingest_real_bom_lines_page_fixture(engine):
     assert len(version.normalized_fields["line_ids"]) == payload["itemsInPage"]
 
 
+EVENTS_LIST_DEFAULT_QUERY_PARAMS = {
+    "EventType": "",
+    "PageSize": 6,
+    "EventStatus": 1,
+    "Keyword": "",
+    "buyerOrganizationName": "",
+    "documentNumber": "",
+    "publishDateFrom": "",
+    "publishDateTo": "",
+    "AwardedparticipantName": "",
+    "AwardedparticipantVoen": "",
+    "DocumentViewType": "",
+    "IsArchived": False,
+}
+
+
 async def test_ingest_real_events_list_page_fixture(engine):
     raw_body = _load_bytes("events_list_page1.raw.json")
     payload = json.loads(raw_body)
@@ -126,6 +142,7 @@ async def test_ingest_real_events_list_page_fixture(engine):
             conn,
             raw_body=raw_body,
             payload=payload,
+            query_params=EVENTS_LIST_DEFAULT_QUERY_PARAMS,
             correlation_id="corr-list-1",
         )
 
