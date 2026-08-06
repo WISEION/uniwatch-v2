@@ -20,6 +20,8 @@ This is a from-scratch rebuild of a legacy system ("v1" — `Tendet Watcher` / `
 
 Every requirement ID used in commits/tests/ADRs (`FR-*`, `INV-*`, `NEG-*`, `P0xx`, `NFR-*`) must trace back to the source documents referenced in `AGENTS.md` §1 — do not invent a requirement ID.
 
+The maker/checker and human-authority mechanics behind bans #4, #6, and #7 are spelled out in `docs/adr/0005-authority-model.md`; the synthetic/real isolation behind `packages/vendor`'s synthetic-only status (below) is `docs/adr/0004-synthetic-real-isolation.md`.
+
 ## Commands
 
 ```bash
@@ -27,8 +29,10 @@ Every requirement ID used in commits/tests/ADRs (`FR-*`, `INV-*`, `NEG-*`, `P0xx
 pip install -e ".[dev]"
 
 # Full test suite (unit + integration; integration spins up a real Postgres
-# via testcontainers — Docker must be running)
-python -m pytest tests/ -q
+# via testcontainers — Docker must be running). Matches CI's Full gate, which
+# excludes live_network-marked tests (etender.gov.az is unreachable from
+# GitHub-hosted runners; see pyproject.toml's marker doc / .github/workflows/ci.yml)
+python -m pytest tests/ -q -m "not live_network"
 
 # Single file / single test
 python -m pytest tests/unit/test_pagination_and_concurrency.py -q
@@ -38,6 +42,9 @@ python -m pytest tests/integration/test_jobs_store.py::test_two_concurrent_claim
 python tools/check_v1_untouched.py
 # first run on a machine where v1 is actually present, to record the baseline:
 python tools/check_v1_untouched.py --init
+
+# run only the live_network-marked tests (CI runs these separately, non-blocking)
+python -m pytest tests/ -q -m live_network
 
 # Run the API (dev) -- two separate services (ADR-0006)
 uvicorn apps.api_tender.main:app --reload --port 8001
@@ -71,7 +78,7 @@ packages/platform    cross-cutting: db, migrations, RBAC, audit, correlation, er
                       — no domain scoring/business-decision logic; shared LIBRARY imported by both
                       apps/api_tender and apps/api_vendor (not itself split into two services)
 packages/tender       tender ingestion, normalization, signals
-packages/vendor       vendor registry (synthetic-only until a legal gate) — no Bid/No-Bid knowledge
+packages/vendor       vendor registry (synthetic-only until a legal gate, ADR-0004) — no Bid/No-Bid knowledge
 packages/decision     Bid/No-Bid workflow, No-Go, outcomes — references immutable input *versions*, never a mutable copy
 packages/algorithm    policy graph / evaluation / approval — owns policy, not business facts
 packages/contracts    shared OpenAPI/DTO/schema contracts across apps/packages; for tender<->vendor
@@ -86,6 +93,9 @@ apps/worker           separate process for anything long-running: ingestion, BOQ
                       reconciliation, outbox consumers — never inside an apps/api_tender or
                       apps/api_vendor request handler; not split by ADR-0006 (tender-scoped in
                       practice today, vendor has no real jobs yet)
+apps/web              React/TypeScript UI (`NFR-ARC-01`) — Phase 2+ scope, not implemented yet
+                      (see apps/web/README.md). Never the source of authorization truth: every
+                      permission check it shows is re-verified server-side (`FR-ADM-02`)
 ```
 
 Enforced import direction and domain boundaries: see `AGENTS.md` §3 and `docs/adr/0001-modular-monolith-boundaries.md` (this file already defers to `AGENTS.md` as normative, per "Read this first" above).
@@ -118,8 +128,10 @@ Layer 3 never writes itself as layer 4. Records also carry `data_origin` (`real`
 
 **Signal layer** (layer 3 of the four-layer model, built on top of normalized facts): each source has its own `Signal` builder (`signal_model.py`'s `build_donor_pipeline_signal`, `design_tender_signal.py`, `procurement_plan_signal.py`) — one builder per source, deliberately not a shared generic mapper, since fields differ too much between sources to stay honest under one abstraction. `signals_store.py` persists and queries them, including `list_signals_by_object_region()` for pulling every signal type against one real-world object. Cross-source object identity (needed for `TENDER_INTELLIGENCE_SPEC.md` §5.3's composite-trigger/intersection model) is resolved by `az_region_identity.py`'s `canonicalize_region()`, built only from region tokens actually observed in real captured data — never a hand-typed exhaustive list — so an unobserved region canonicalizes to `None` (surfaced, not guessed) rather than silently wrong.
 
+**Vendor reputation facts** (`packages/vendor/`, SCG — Supplier Confidence Graph — 4th data layer, `TENDER_INTELLIGENCE_SPEC.md` §6.2): `reputation_model.py`'s `ReputationFact` classifies vendor event types (late delivery, quality dispute, etc.) as a typed, TTL-aware fact distinct from the vendor identity record itself; `reputation_store.py` persists them and exposes an active-facts query that respects the TTL rather than returning expired facts as if current. `synthetic_reputation.py` generates these deterministically, same synthetic/real isolation rules as the rest of `packages/vendor` (ADR-0004). The trust-coefficient formula that turns facts into a score is an open decision (`D-VND-REP`, `docs/decisions/OPEN-QUESTIONS.md`) — do not invent a weighting.
+
 **Testing**: `tests/{unit,integration,contract,state,security,e2e,performance}` mirrors the CI gate split (`tests/README.md`) — `unit/` is pure logic (Fast gate); everything else needs real dependencies (Full gate). `tests/integration/conftest.py` spins up a session-scoped `testcontainers` Postgres container, gives each test a freshly dropped/recreated `public` schema, and applies all migrations before yielding an engine — Docker must be running locally to execute anything under `tests/integration/`.
 
 ## Working within phases
 
-Phase/gate discipline, WORKLOG/OPEN-QUESTIONS/ADR conventions: see `AGENTS.md` §4. Plan of record for Phase 0/1: `docs/reports/PLAN-MISSION-1.md`; for the phases after it, `TENDER_INTELLIGENCE_SPEC.md` (project root) now supersedes `PLAN-MISSION-{2..5}.md`'s framing (see `docs/CONTEXT.md` "Where things live"). Check `docs/reports/WORKLOG.md`'s most recent entry for the current phase/task and whether a phase exit gate is awaiting supervisor GO before the next phase starts — do not assume this file's phase reference is still current.
+Phase/gate discipline, WORKLOG/OPEN-QUESTIONS/ADR conventions: see `AGENTS.md` §4. Plan of record for Phase 0/1: `docs/reports/PLAN-MISSION-1.md`; for the Phase 1 remainder (1.C/1.D/1.E) and the Phase 2-4 subsystems (DFE/SCG/EL/MDC), `TENDER_INTELLIGENCE_SPEC.md` (project root) supersedes `PLAN-MISSION-3/4/5.md`'s framing for the parts it covers (see `docs/CONTEXT.md` "Where things live" — it's a partial supersession, not a blanket replacement of those plan files). Check `docs/reports/WORKLOG.md`'s most recent entry for the current phase/task and whether a phase exit gate is awaiting supervisor GO before the next phase starts — do not assume this file's phase reference is still current. Likewise, `docs/decisions/OPEN-QUESTIONS.md` accumulates open decisions continuously (e.g. `D-VND-REP`, above) — treat any specific decision ID mentioned in this file as an example, not an exhaustive or current list.
