@@ -61,7 +61,10 @@ class BoqLineMatch:
 
 
 def _material_matches(boq_line: BoqLine, offer_material: str) -> bool:
-    return offer_material.strip().lower() in boq_line.description.lower()
+    material = offer_material.strip().lower()
+    if not material:
+        return False
+    return material in boq_line.description.lower()
 
 
 def _freshness(offer: VendorOfferDTO, as_of: datetime) -> str:
@@ -99,9 +102,8 @@ def _traffic_light(candidates: tuple[MatchCandidate, ...]) -> str:
     sources = tuple(c for c in candidates if c.volume_status != "insufficient")
     if not sources:
         return "red"
-    has_fresh_source = any(c.freshness == "fresh" for c in sources)
-    has_positive_source = any(c.has_positive_reputation for c in sources)
-    if len(sources) >= 2 and has_fresh_source and has_positive_source:
+    confirmed_fresh_by_vendor = {c.vendor_id: c for c in sources if c.volume_status == "sufficient" and c.freshness == "fresh"}
+    if len(confirmed_fresh_by_vendor) >= 2 and any(c.has_positive_reputation for c in confirmed_fresh_by_vendor.values()):
         return "green"
     return "yellow"
 

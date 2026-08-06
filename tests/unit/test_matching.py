@@ -132,6 +132,7 @@ def test_match_boq_line_is_red_with_no_matching_offers():
     match = match_boq_line(boq_line, offers, as_of=AS_OF)
 
     assert match.traffic_light == "red"
+    assert match.candidates == ()
 
 
 def test_match_boq_line_is_yellow_with_a_single_source():
@@ -204,3 +205,53 @@ def test_match_boq_line_ranks_executable_candidates_by_price():
     prices = [estimate.base_price_with_vat for _candidate, estimate in match.ranked_executable]
     assert prices == sorted(prices)
     assert all(estimate.status == "partial_price_only" for _candidate, estimate in match.ranked_executable)
+    assert len(match.ranked_executable) == 2
+    assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor B", "Vendor A"]
+
+
+def test_match_boq_line_ranked_executable_excludes_stale_candidates_even_if_cheaper():
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", price=50.0, valid_until="2026-08-01T00:00:00+00:00"),
+        _offer(vendor_id=2, vendor_name="Vendor B", price=200.0, has_positive_reputation=True),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor B"]
+
+
+def test_match_boq_line_is_yellow_not_green_when_units_cannot_be_compared():
+    boq_line = _boq_line(unit_canonical="kg")
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", uom="t", has_positive_reputation=True),
+        _offer(vendor_id=2, vendor_name="Vendor B", uom="t"),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert match.traffic_light == "yellow"
+
+
+def test_match_boq_line_is_yellow_when_only_one_source_is_both_fresh_and_positive():
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", has_positive_reputation=True, valid_until="2026-08-01T00:00:00+00:00"),
+        _offer(vendor_id=2, vendor_name="Vendor B", has_positive_reputation=False),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert match.traffic_light == "yellow"
+
+
+def test_match_boq_line_dedupes_duplicate_vendor_id_when_counting_sources():
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", has_positive_reputation=True),
+        _offer(vendor_id=1, vendor_name="Vendor A", has_positive_reputation=True),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert match.traffic_light == "yellow"
