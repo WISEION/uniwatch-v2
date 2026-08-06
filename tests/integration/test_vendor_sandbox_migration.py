@@ -13,8 +13,8 @@ async def test_vendors_table_rejects_realm_watermark_mismatch(engine):
         # Correct pairing succeeds.
         await conn.execute(
             text(
-                "INSERT INTO vendors (data_realm, watermark, name, provider_type, seed) "
-                "VALUES ('vendor-sandbox', 'SYNTHETIC', 'Test Vendor', 'synthetic', 1)"
+                "INSERT INTO vendors (data_realm, watermark, name, provider_type, seed, api_key) "
+                "VALUES ('vendor-sandbox', 'SYNTHETIC', 'Test Vendor', 'synthetic', 1, 'test-key-1')"
             )
         )
 
@@ -22,8 +22,8 @@ async def test_vendors_table_rejects_realm_watermark_mismatch(engine):
         try:
             await conn.execute(
                 text(
-                    "INSERT INTO vendors (data_realm, watermark, name, provider_type, seed) "
-                    "VALUES ('vendor-sandbox', 'REAL', 'Bad Vendor', 'synthetic', 1)"
+                    "INSERT INTO vendors (data_realm, watermark, name, provider_type, seed, api_key) "
+                    "VALUES ('vendor-sandbox', 'REAL', 'Bad Vendor', 'synthetic', 1, 'test-key-2')"
                 )
             )
         except IntegrityError:
@@ -37,8 +37,8 @@ async def test_vendor_offers_table_rejects_realm_watermark_mismatch(engine):
         vendor_id = (
             await conn.execute(
                 text(
-                    "INSERT INTO vendors (data_realm, watermark, name, provider_type, seed) "
-                    "VALUES ('vendor-sandbox', 'SYNTHETIC', 'Test Vendor 2', 'synthetic', 2) RETURNING id"
+                    "INSERT INTO vendors (data_realm, watermark, name, provider_type, seed, api_key) "
+                    "VALUES ('vendor-sandbox', 'SYNTHETIC', 'Test Vendor 2', 'synthetic', 2, 'test-key-3') RETURNING id"
                 )
             )
         ).scalar_one()

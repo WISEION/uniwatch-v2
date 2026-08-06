@@ -537,3 +537,41 @@ Anyone building a third provider (ERP/API/portal) should follow `SupplyProvider`
 
 **Owner follow-up needed:** No, not blocking. Revisit `CsvProvider`'s schema once a real vendor CSV
 sample exists.
+
+## 2026-08-06 — `FR-VND-09` closed for Phase 3: PRD-vs-PLAN-MISSION doc drift resolved in favor of the PRD
+
+**Context:** Before starting this task, `docs/reports/PLAN-MISSION-3.md` and
+`docs/reports/PLAN-MISSION-7.md` both scoped `FR-VND-09` (route/service/database tenant isolation
+tests, PRD §5.5 line 323, P0) to Phase 7 only — `OPEN-QUESTIONS.md`'s own prior entries (task 3.A,
+2026-08-06) repeated that framing twice. A targeted re-read of the source PRD
+(`Uniwatch VER2/0_UNIWatch-v2-PRD-v1.0.md` §10.1 roadmap table, line 581) found that the PRD itself
+lists `FR-VND-01..06, 09` under **Phase 3's** exit criteria, not Phase 7's (Phase 7's row, line 585,
+lists only `FR-VND-07,08` + `NFR-PRV-01..04`). No `PLAN-MISSION-{1..8}.md` document other than
+PLAN-MISSION-7 ever mentions `FR-VND-09`. Per `AGENTS.md` §1's conflict rule ("on conflict, the
+source documents win and this file must be corrected in the same change") and the owner's explicit
+direction this session ("build it now, PRD wins"), `FR-VND-09` is built now, in Phase 3.
+
+**Deviation/assumption:** The identity mechanism used to prove route-level isolation
+(`apps/api_vendor/deps.py::get_current_vendor_id`, a server-issued per-vendor API key stored in the
+new `vendors.api_key` column, migration `0010`) is a Phase-3, sandbox-only credential scheme —
+**not** a resolution of `D-IDP` (the pilot's internal human-user identity provider decision, still
+open) and not a claim that Phase 7's real vendor onboarding will keep using it (Phase 7's own
+onboarding state machine, `PLAN-MISSION-7.md` §7.B, has a separate "invitation → identity/tenant
+isolation" step that may need a genuinely different flow, e.g. real credential issuance during
+onboarding rather than at synthetic-generation time). Postgres Row-Level Security (a defense-in-depth
+mechanism beyond correct application-level `WHERE vendor_id = ...` scoping) was considered and
+deliberately not built — no other table in this codebase uses RLS yet, and the PRD's own wording only
+asks for tests "at the route, service, and database levels", not a specific enforcement mechanism per
+level.
+
+**Consequence that must not be silently dropped:** `docs/reports/PLAN-MISSION-3.md` still does not
+list `FR-VND-09` under task 3.B's table (only `FR-VND-06`/`NEG-04` synthetic-vs-production isolation)
+— it should eventually be corrected to match the PRD so a future session reading only the mission
+plan doesn't re-derive this same conflict from scratch. Not fixed in this task (out of this task's own
+scope, which was the code + tests, not a plan-doc rewrite) — flagged here as a real follow-up, not
+silently left stale. Real vendor onboarding (Phase 7) may still need its own, different identity
+mechanism; this task's API-key scheme should not be assumed to survive that gate unchanged.
+
+**Owner follow-up needed:** No, not blocking. Two non-urgent follow-ups recorded: (1) correct
+`PLAN-MISSION-3.md`'s task 3.B table to list `FR-VND-09`, (2) when Phase 7 real vendor onboarding
+starts, re-evaluate whether this API-key mechanism carries forward or is replaced.

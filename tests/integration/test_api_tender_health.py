@@ -11,7 +11,7 @@ from packages.platform.settings import Settings
 
 @pytest_asyncio.fixture
 async def client(engine, _database_url, migrated_asyncpg_dsn):
-    settings = Settings(database_url=_database_url, expected_schema_version=9)
+    settings = Settings(database_url=_database_url, expected_schema_version=10)
     app = create_app(settings)
     app.state.engine = engine
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -30,7 +30,7 @@ async def test_readiness_ok_when_schema_matches(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["schema_version"] == 9
+    assert body["schema_version"] == 10
 
 
 async def test_readiness_fails_on_schema_mismatch(engine, _database_url, migrated_asyncpg_dsn):
