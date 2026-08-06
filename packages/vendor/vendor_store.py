@@ -7,6 +7,7 @@ does not re-validate it, it just never omits the columns)."""
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
 from typing import Any
 
@@ -16,13 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from .vendor_model import Offer, Vendor
 
 
-async def store_vendor(conn: AsyncConnection, vendor: Vendor) -> int:
-    return (
+async def store_vendor(conn: AsyncConnection, vendor: Vendor) -> tuple[int, str]:
+    api_key = secrets.token_hex(32)
+    vendor_id = (
         await conn.execute(
             text(
                 """
-                INSERT INTO vendors (data_realm, watermark, name, provider_type, seed)
-                VALUES (:data_realm, :watermark, :name, :provider_type, :seed)
+                INSERT INTO vendors (data_realm, watermark, name, provider_type, seed, api_key)
+                VALUES (:data_realm, :watermark, :name, :provider_type, :seed, :api_key)
                 RETURNING id
                 """
             ),
@@ -32,9 +34,11 @@ async def store_vendor(conn: AsyncConnection, vendor: Vendor) -> int:
                 "name": vendor.name,
                 "provider_type": vendor.provider_type,
                 "seed": vendor.seed,
+                "api_key": api_key,
             },
         )
     ).scalar_one()
+    return vendor_id, api_key
 
 
 async def store_offer(conn: AsyncConnection, vendor_id: int, offer: Offer) -> int:
@@ -93,6 +97,32 @@ async def list_offers_by_data_realm(conn: AsyncConnection, *, data_realm: str) -
                     """
                 ),
                 {"data_realm": data_realm},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
+async def get_vendor_id_by_api_key(conn: AsyncConnection, *, api_key: str) -> int | None:
+    row = (await conn.execute(text("SELECT id FROM vendors WHERE api_key = :api_key"), {"api_key": api_key})).first()
+    return row[0] if row is not None else None
+
+
+async def list_offers_by_vendor(conn: AsyncConnection, *, vendor_id: int) -> list[dict[str, Any]]:
+    rows = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT id, vendor_id, data_realm, watermark, material, price, currency, vat_rate,
+                           uom, uom_canonical_qty, moq, capacity, inventory, valid_from, valid_until,
+                           evidence_source, observed_at, adverse_case
+                    FROM vendor_offers WHERE vendor_id = :vendor_id ORDER BY id
+                    """
+                ),
+                {"vendor_id": vendor_id},
             )
         )
         .mappings()
