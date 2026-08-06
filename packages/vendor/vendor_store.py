@@ -129,3 +129,30 @@ async def list_offers_by_vendor(conn: AsyncConnection, *, vendor_id: int) -> lis
         .all()
     )
     return [dict(row) for row in rows]
+
+
+async def list_offers_with_vendor_name_by_data_realm(conn: AsyncConnection, *, data_realm: str) -> list[dict[str, Any]]:
+    """Same shape as list_offers_by_data_realm, plus vendor_name -- lets a
+    caller outside this service (packages/decision, via the internal
+    offers endpoint) resolve vendor identity in one round trip."""
+    rows = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT o.id, o.vendor_id, v.name AS vendor_name, o.data_realm, o.watermark, o.material,
+                           o.price, o.currency, o.vat_rate, o.uom, o.uom_canonical_qty, o.moq, o.capacity,
+                           o.inventory, o.valid_from, o.valid_until, o.evidence_source, o.observed_at, o.adverse_case
+                    FROM vendor_offers o
+                    JOIN vendors v ON v.id = o.vendor_id
+                    WHERE o.data_realm = :data_realm
+                    ORDER BY o.id
+                    """
+                ),
+                {"data_realm": data_realm},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]

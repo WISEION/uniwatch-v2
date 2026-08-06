@@ -6,10 +6,11 @@ produces only sandbox/SYNTHETIC rows when queried back
 from __future__ import annotations
 
 from packages.vendor.synthetic_provider import SyntheticProvider
-from packages.vendor.vendor_model import Vendor
+from packages.vendor.vendor_model import Offer, Vendor
 from packages.vendor.vendor_store import (
     get_vendor_id_by_api_key,
     list_offers_by_data_realm,
+    list_offers_with_vendor_name_by_data_realm,
     store_offer,
     store_vendor,
 )
@@ -87,3 +88,36 @@ async def test_get_vendor_id_by_api_key_denies_an_unknown_key(engine):
         resolved = await get_vendor_id_by_api_key(conn, api_key="not-a-real-key")
 
     assert resolved is None
+
+
+async def test_list_offers_with_vendor_name_by_data_realm_includes_vendor_name(engine):
+    vendor = Vendor(data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Joined Vendor", provider_type="synthetic", seed=1)
+    offer = Offer(
+        vendor_name="Joined Vendor",
+        data_realm="vendor-sandbox",
+        watermark="SYNTHETIC",
+        material="rebar A400",
+        price=850.0,
+        currency="AZN",
+        vat_rate=0.18,
+        uom="t",
+        uom_canonical_qty=1.0,
+        moq=1.0,
+        capacity=50.0,
+        inventory=20.0,
+        valid_from="2026-08-01T00:00:00+00:00",
+        valid_until="2026-09-01T00:00:00+00:00",
+        evidence_source="test",
+        observed_at="2026-08-06T00:00:00+00:00",
+        adverse_case=None,
+    )
+
+    async with engine.begin() as conn:
+        vendor_id, _api_key = await store_vendor(conn, vendor)
+        await store_offer(conn, vendor_id, offer)
+        rows = await list_offers_with_vendor_name_by_data_realm(conn, data_realm="vendor-sandbox")
+
+    matching = [r for r in rows if r["vendor_id"] == vendor_id]
+    assert len(matching) == 1
+    assert matching[0]["vendor_name"] == "Joined Vendor"
+    assert matching[0]["material"] == "rebar A400"
