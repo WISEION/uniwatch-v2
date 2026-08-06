@@ -185,7 +185,9 @@ async def test_internal_offers_reports_positive_reputation_flag(engine, _databas
     vendor_app.state.engine = engine
 
     async with engine.begin() as conn:
-        vendor = Vendor(data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Reliable Vendor", provider_type="synthetic", seed=1)
+        vendor = Vendor(
+            data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Reliable Vendor", provider_type="synthetic", seed=1
+        )
         vendor_id, _api_key = await store_vendor(conn, vendor)
         offer = Offer(
             vendor_name="Reliable Vendor",
@@ -241,7 +243,9 @@ async def test_internal_offers_reports_no_reputation_flags_when_no_facts_exist(e
     vendor_app.state.engine = engine
 
     async with engine.begin() as conn:
-        vendor = Vendor(data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Unknown History Vendor", provider_type="synthetic", seed=2)
+        vendor = Vendor(
+            data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Unknown History Vendor", provider_type="synthetic", seed=2
+        )
         vendor_id, _api_key = await store_vendor(conn, vendor)
         offer = Offer(
             vendor_name="Unknown History Vendor",
@@ -454,7 +458,9 @@ async def test_list_vendor_offers_returns_parsed_items():
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport, base_url="http://vendor-test") as client:
-        result = await list_vendor_offers("http://vendor-test", data_realm="vendor-sandbox", as_of="2026-08-06T00:00:00+00:00", client=client)
+        result = await list_vendor_offers(
+            "http://vendor-test", data_realm="vendor-sandbox", as_of="2026-08-06T00:00:00+00:00", client=client
+        )
 
     assert len(result) == 1
     assert result[0].vendor_name == "Reliable Vendor"
@@ -471,7 +477,9 @@ async def test_list_vendor_offers_sends_query_params():
 
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport, base_url="http://vendor-test") as client:
-        await list_vendor_offers("http://vendor-test", data_realm="vendor-sandbox", as_of="2026-08-06T00:00:00+00:00", client=client)
+        await list_vendor_offers(
+            "http://vendor-test", data_realm="vendor-sandbox", as_of="2026-08-06T00:00:00+00:00", client=client
+        )
 
     assert captured["data_realm"] == "vendor-sandbox"
     assert captured["as_of"] == "2026-08-06T00:00:00+00:00"
@@ -484,7 +492,9 @@ async def test_list_vendor_offers_raises_typed_error_on_non_200():
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport, base_url="http://vendor-test") as client:
         with pytest.raises(VendorApiError):
-            await list_vendor_offers("http://vendor-test", data_realm="vendor-sandbox", as_of="2026-08-06T00:00:00+00:00", client=client)
+            await list_vendor_offers(
+                "http://vendor-test", data_realm="vendor-sandbox", as_of="2026-08-06T00:00:00+00:00", client=client
+            )
 ```
 
 Update the top-level import line to:
@@ -589,7 +599,9 @@ async def test_list_vendor_offers_round_trip_against_the_real_vendor_app(engine,
     vendor_app.state.engine = engine
 
     async with engine.begin() as conn:
-        vendor = Vendor(data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Contract Test Vendor", provider_type="synthetic", seed=1)
+        vendor = Vendor(
+            data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Contract Test Vendor", provider_type="synthetic", seed=1
+        )
         vendor_id, _api_key = await store_vendor(conn, vendor)
         offer = Offer(
             vendor_name="Contract Test Vendor",
@@ -683,7 +695,13 @@ from packages.decision.matching import classify_candidate, match_boq_line
 from packages.tender.boq_line_model import BoqLine
 
 
-def _boq_line(*, qty: str = "10", unit_canonical: str | None = "t", unit_status: str = "mapped", description: str = "cement M400 for foundation") -> BoqLine:
+def _boq_line(
+    *,
+    qty: str = "10",
+    unit_canonical: str | None = "t",
+    unit_status: str = "mapped",
+    description: str = "cement M400 for foundation",
+) -> BoqLine:
     return BoqLine(
         source_line_id=1,
         page_number=1,

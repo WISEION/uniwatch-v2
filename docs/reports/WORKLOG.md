@@ -818,3 +818,33 @@ that formula. Natural next Phase 3 work: 3.C (Executable Availability) or 3.D (B
 either consuming raw reputation facts directly rather than a collapsed coefficient.
 
 **Блокеры:** нет новых. `D-VND-REP` is non-blocking (see above).
+
+## 2026-08-06 — Задание: Phase 3, задача 3.D (BOQ↔SCG matching)
+
+**Сделано:**
+- `packages/vendor/vendor_store.py::list_offers_with_vendor_name_by_data_realm()` — offers joined with vendor name.
+- `apps/api_vendor/routers/internal.py::GET /internal/offers` — service-to-service endpoint (unauthenticated, same gap as `/internal/ping`), returns offers enriched with `has_positive_reputation`/`has_negative_reputation` computed from `packages/vendor/reputation_store.py`.
+- `packages/contracts/vendor_api.py::list_vendor_offers()` + `VendorOfferDTO` — the real network client for the above, same error-handling shape as `ping_vendor_service`.
+- `packages/decision/matching.py` — first real code in `packages/decision` (ADR-0006 names it as the intended home for logic needing both Tender and Vendor data). `classify_candidate()` builds a `MatchCandidate` per (BOQ line, offer) pair that passes `_material_matches()`'s case-insensitive substring heuristic; `_volume_status()` compares `offer.inventory` against `boq_line.qty` only when both units canonicalize equal via `canonicalize_unit()`, returning `"sufficient"`/`"insufficient"`/`"unit_mismatch"`/`"unit_unmapped"` (never folding an unmapped/mismatched unit into a false match). `_traffic_light()` implements §6.4's inverted logic: candidates with `volume_status == "insufficient"` are excluded from the source count entirely before any color decision; green requires at least two distinct vendors that are simultaneously `sufficient` *and* `fresh` (not merely counted as a "source"), with at least one of those two carrying `has_positive_reputation`; anything with at least one non-insufficient source but not meeting green is yellow; zero sources is red. `rank_executable_candidates_by_tco()` ranks only the `sufficient`+`fresh` subset by `base_price_with_vat` (`TcoEstimate.status` always `"partial_price_only"`). `match_boq_line()` composes all of the above per BOQ line.
+- `packages/decision/boq_summary.py::summarize_boq_matches()` — P315's green/yellow/red-by-money summary: sums `boq_line.amount` into the matching traffic-light bucket per line, and tracks lines with `amount is None` in a real `unpriced_line_count: int` (not folded into any bucket or into 0%) rather than the no-op `Decimal` accumulator an earlier pass had left in place. Percentages divide by `total_priced_amount` (sum of the three buckets, excluding unpriced lines) and return `0.0` rather than raising when that total is zero.
+- **Review fix rounds already folded into the above (not separate work in this task):** task 4 (`matching.py`) went through one fix round correcting `_traffic_light`'s executability/counting logic; task 5 (`boq_summary.py`) went through one fix round replacing a no-op `unpriced_amount` accumulator with the real `unpriced_line_count` int. Both are reflected in the descriptions above as the code exists now.
+- **Deliberately not built, recorded not silently skipped:** full TCO (`logistics`/`financing`/`insurance`/`risk_reserve(reputation)`), a real spec-requirement/entity-matching algorithm, and 3.C's graduated Executable-Availability status — see `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-06 ("Task 3.D matching heuristics and TCO scope").
+- Task 6 housekeeping: `python -m ruff format .` reformatted one pre-existing file, `docs/superpowers/plans/2026-08-06-phase3-task3d-boq-scg-matching.md` (long embedded code lines wrapped) — content unchanged, no code under `packages/`/`apps/` touched by this step.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network"
+334 passed, 33 skipped, 3 deselected in 177.67s (0:02:57)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps
+228 files already formatted / All checks passed! / Success: no issues found in 74 source files
+$ python tools/check_v1_untouched.py
+FAIL: v1 path literals found outside the documentation allowlist (FR-MIG-04, NEG-01, NEG-02):
+  - .superpowers\sdd\2026-08-06-phase3-task3d-boq-scg-matching\task-2-report.md: contains forbidden v1 path literal 'Tendet Watcher'
+  - .superpowers\sdd\2026-08-06-phase3-task3d-boq-scg-matching\task-3-report.md: contains forbidden v1 path literal 'Tendet Watcher'
+  - .superpowers\sdd\2026-08-06-phase3-task3d-boq-scg-matching\task-4-report.md: contains forbidden v1 path literal 'Tendet Watcher'
+```
+The `check_v1_untouched.py` failure above is a known, pre-existing, non-blocking artifact: `.superpowers/sdd/` is entirely covered by its own `.gitignore` (`*`), confirmed via `git status --short --ignored` (all three files show `!!`, i.e. untracked and ignored) — the checker's plain filesystem walk still reads their bytes even though git never will. All three flagged files are this plan's own scratch task reports, which *describe* the v1-path-checking mechanism itself (hence the literal string appears inside them). No path literal was introduced in any file this task actually staged/committed (`docs/decisions/OPEN-QUESTIONS.md`, `docs/reports/WORKLOG.md`) — grepped clean.
+
+**Дальше:** task 3.D's raw matching mechanism is real and proven against the fields that exist today. Natural next Phase 3 work: task 3.C (Executable Availability, §6.3) can now feed a real graduated status into `classify_candidate`'s `volume_status`/`freshness` fields instead of this task's narrower proxy; alternatively, a real material/spec-matching algorithm or the TCO financial weights, once an owner research/approval gate resolves `D-VND-REP`'s sibling gaps recorded above.
+
+**Блокеры:** нет новых. The recorded heuristic/TCO gaps are non-blocking (see `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-06). The `check_v1_untouched.py` finding above is also non-blocking — pre-existing, gitignored scratch files, not a real v1-path violation.

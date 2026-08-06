@@ -613,3 +613,33 @@ separate future task if/when Phase 4 needs it.
 formula) needs an explicit research/approval gate before 3.C/3.D can compute a real weighted
 availability status or TCO risk-reserve term — tracked the same way `D-TAX` tracks the UOM/FX/VAT
 coefficient gap for this phase.
+
+## 2026-08-06 — Task 3.D matching heuristics and TCO scope
+
+**Context:** Task 3.D (`TENDER_INTELLIGENCE_SPEC.md` §6.4, BOQ↔SCG matching, `INV-19`, `P315`).
+
+**Deviation/assumption:** Three gaps recorded, not silently approximated:
+1. **Material matching** (`BoqLine.description` vs. `Offer.material`) uses a case-insensitive
+   substring heuristic — no source document supplies a real entity-matching/NLP algorithm, and this
+   is the same deterministic-heuristic discipline `boq_line_model.py`'s spec-requirement regexes
+   already use.
+2. **Volume sufficiency** only compares `Offer.inventory` (on-hand stock) against `BoqLine.qty`, and
+   only when both sides' units canonicalize to the same value via the existing `canonicalize_unit()`.
+   `Offer.capacity` (a production *rate*) is not used, because comparing a rate to a flat quantity
+   needs a delivery window `BoqLine` does not carry. An unmapped/mismatched unit is its own explicit
+   `volume_status`, never folded into a false match or false non-match.
+3. **TCO** (`price + logistics + financing + insurance + risk_reserve(репутация)`, §6.4) is computed
+   as `base_price_with_vat` only. `risk_reserve` is exactly `D-VND-REP`'s still-open coefficient;
+   `logistics`/`financing`/`insurance` have no source-supplied formula either and no existing
+   `TBD-nn` tag names them yet. `TcoEstimate.status` is always `"partial_price_only"` so no caller can
+   mistake this for a complete TCO ranking.
+
+**Source conflict (if any):** None — the source spec names the full TCO formula and the
+"who can guarantee delivery" ordering, but supplies no algorithm for either the entity match or the
+financial weights.
+
+**Owner follow-up needed:** Yes, non-blocking. A real material/spec-matching algorithm and the
+logistics/financing/insurance weights need their own research/approval gate before `3.D`'s traffic
+light and TCO ranking can be trusted as anything beyond a first-pass heuristic. Tracked alongside
+`D-VND-REP` — no new `D-*`/`TBD-*` ID is minted here since both gaps are sub-parts of the same
+"SCG pricing/matching needs an approved formula" question `D-VND-REP` already opened.
