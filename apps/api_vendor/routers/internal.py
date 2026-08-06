@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from packages.vendor.reputation_model import POSITIVE_EVENT_TYPES
+from packages.vendor.reputation_model import NEGATIVE_EVENT_TYPES, POSITIVE_EVENT_TYPES
 from packages.vendor.reputation_store import list_active_reputation_facts
 from packages.vendor.vendor_store import list_offers_with_vendor_name_by_data_realm
 
@@ -88,7 +88,7 @@ async def list_internal_offers(
             facts = await list_active_reputation_facts(conn, vendor_id=vendor_id, as_of=as_of_iso)
             event_types = {f["event_type"] for f in facts}
             has_positive = any(t in POSITIVE_EVENT_TYPES for t in event_types)
-            has_negative = any(t not in POSITIVE_EVENT_TYPES for t in event_types)
+            has_negative = any(t in NEGATIVE_EVENT_TYPES for t in event_types)
             reputation_cache[vendor_id] = (has_positive, has_negative)
         has_positive, has_negative = reputation_cache[vendor_id]
         items.append(
