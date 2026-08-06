@@ -702,3 +702,62 @@ synthetic-sandbox slice (task 3.A) is now reasonably complete for a first pass; 
 against the sandbox data that now exists).
 
 **Блокеры:** нет новых.
+
+## 2026-08-06 — Phase 3, task 3.B (vendor): tenant isolation — `FR-VND-09` closed, route/service/database tests
+
+**Doc-drift found and resolved before coding:** `docs/reports/PLAN-MISSION-3.md`/`PLAN-MISSION-7.md`
+both scoped `FR-VND-09` to Phase 7 only, but the source PRD (`0_UNIWatch-v2-PRD-v1.0.md` §10.1 roadmap
+table, line 581) lists `FR-VND-09` under **Phase 3's** exit criteria (`FR-VND-01..06, 09`), not
+Phase 7's. Per `AGENTS.md` §1 ("on conflict, the source documents win") and the owner's explicit
+direction this session ("build it now, PRD wins"), built now. Full finding + resolution recorded in
+`docs/decisions/OPEN-QUESTIONS.md` (2026-08-06 entry).
+
+**Сделано:**
+- Plan `docs/superpowers/plans/2026-08-06-phase3-task3b-vendor-tenant-isolation.md`, executed inline.
+- `migrations/0010_vendor_api_key.sql` — `vendors.api_key TEXT NOT NULL UNIQUE`. Real schema ledger
+  version bumped 9→10; every hardcoded `9` referring to the real current schema version across
+  `packages/platform/settings.py` and five test files bumped to `10` (the deliberate mismatch value
+  `99` in `test_readiness_fails_on_schema_mismatch` left untouched, same discipline as the two prior
+  `6→7`/`8→9` follow-ups).
+- `packages/vendor/vendor_store.py` — `store_vendor()` now generates a server-issued API key
+  (`secrets.token_hex(32)`, never client-supplied, never omitted — `INV-11`) and returns
+  `(vendor_id, api_key)`; `get_vendor_id_by_api_key()` (deny-by-default: unknown key → `None`, same
+  discipline as `packages/platform/rbac/store.py::resolve_identity`); `list_offers_by_vendor()` — the
+  service layer's own scoped-by-vendor query.
+- Three isolation tests, one per PRD-named level, each proving the SAME property from a different
+  entry point:
+  - **Database** (`tests/integration/test_vendor_tenant_isolation_db.py`): raw SQL, two vendors with
+    otherwise-identical offer fields, `WHERE vendor_id = :x` never returns the other vendor's row.
+  - **Service** (`tests/integration/test_vendor_tenant_isolation_service.py`): calling
+    `list_offers_by_vendor()` directly (no HTTP) with two real `SyntheticProvider` batches stored side
+    by side never leaks across vendors.
+  - **Route** (`tests/security/test_vendor_tenant_isolation_route.py`): real HTTP against the real
+    `apps/api_vendor` app — vendor A's own API key on `GET /vendors/me/offers` never returns vendor
+    B's offers; a missing or unknown key is denied (401, `INV-08`), never given a default identity.
+- `apps/api_vendor/deps.py` (new) — `get_current_vendor_id()`, same deny-by-default shape as
+  `apps/api_tender/deps.py::get_current_identity`, explicitly documented as a Phase-3 sandbox-only
+  mechanism that does **not** resolve `D-IDP`. `apps/api_vendor/routers/offers.py` (new) —
+  `GET /vendors/me/offers`, the first real vendor-facing route beyond `/internal/ping`; the vendor id
+  is never a path/query/body parameter, only the resolved identity, so there is no input a caller
+  could manipulate to reach another vendor's data. Wired into `apps/api_vendor/main.py`.
+- Postgres Row-Level Security (defense-in-depth beyond correct application-level scoping) considered
+  and deliberately not built — recorded in OPEN-QUESTIONS, not silently skipped: no other table in
+  this codebase uses RLS, and the PRD's wording asks for tests at three levels, not a specific
+  enforcement mechanism at each.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+297 passed, 33 skipped in 177.27s (0:02:57)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+215 files already formatted / All checks passed! / Success: no issues found in 69 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** `FR-VND-09` closed for Phase 3. Follow-ups recorded in OPEN-QUESTIONS (non-blocking):
+(1) `PLAN-MISSION-3.md`'s task 3.B table should eventually be corrected to list `FR-VND-09`, matching
+the PRD; (2) this API-key mechanism is Phase-3-scoped and should be re-evaluated (not assumed to
+carry forward unchanged) once Phase 7 real vendor onboarding designs its own credential-issuance flow.
+`FR-VND-03`'s "decision" half (3.C/3.D matching/availability logic) remains the other open item from
+prior entries.
+
+**Блокеры:** нет новых.
