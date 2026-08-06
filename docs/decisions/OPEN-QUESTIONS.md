@@ -575,3 +575,41 @@ mechanism; this task's API-key scheme should not be assumed to survive that gate
 **Owner follow-up needed:** No, not blocking. Two non-urgent follow-ups recorded: (1) correct
 `PLAN-MISSION-3.md`'s task 3.B table to list `FR-VND-09`, (2) when Phase 7 real vendor onboarding
 starts, re-evaluate whether this API-key mechanism carries forward or is replaced.
+
+## 2026-08-06 — New open decision `D-VND-REP`: reputation trust-coefficient formula unresolved
+
+**Context:** Phase 3, task 3.B (SCG) — `TENDER_INTELLIGENCE_SPEC.md` §6.2's reputation layer
+(`ReputationFact` domain model, deterministic synthetic generator, DB-enforced storage with TTL
+expiry). Note: this is a *different* task 3.B than the one closed just above — that entry's 3.B was
+`PLAN-MISSION-3.md`'s own numbering (tenant isolation); this one is `TENDER_INTELLIGENCE_SPEC.md`
+§6's numbering (reputation layer), which this repo has been tracking against since task 3.A (see
+that entry's own doc-drift note). Two different documents both use "3.B" for different content —
+recorded here explicitly so a future reader isn't confused by the same label meaning two things.
+
+**Deviation/assumption:** `INV-19` states reputation is "a trust coefficient through which every
+availability status and every SCG price passes" (§6.2). No source document (PRD, master plan,
+`TENDER_INTELLIGENCE_SPEC.md`) supplies the actual formula that collapses a vendor's
+`ReputationFact` history into that coefficient. Since `INV-19` explicitly ties the coefficient to
+SCG *prices*, inventing a formula now would mean inventing a financial-adjacent number — the same
+category `AGENTS.md` §2's hard ban #2 covers for `TBD-nn`/`D-*` items, even though no existing
+`TBD-nn` tag currently names this specific gap. This task therefore built only the raw-fact layer
+(model, generator, storage, TTL expiry) and left the coefficient formula unresolved — recorded as a
+**new** open decision, `D-VND-REP`, rather than silently picking a heuristic.
+
+**Consequence that must not be silently dropped:** `D-VND-REP` blocks only the *numeric* half of
+tasks 3.C (Executable Availability, §6.3) and 3.D (BOQ↔SCG matching, §6.4) — both explicitly name
+`INV-19`. Neither task is blocked from *starting*: both can consume raw `ReputationFact` rows
+directly (e.g. counting negative events per vendor) without a collapsed coefficient, same
+incremental-slice discipline already used elsewhere in this phase (e.g. task 2.D's `is_composite`
+proxy for the still-open `TBD-TIS-01`/`TBD-TIS-02`). Two further gaps recorded, not silently
+approximated: (1) `ReputationFact`'s TTL implements a plain `observed_at + ttl_days` expiry, not
+§6.2's "TTL resets on vendor ownership change" — `packages/vendor` has no ownership/parent-entity
+concept on `Vendor` at all yet; (2) this task's `ReputationFact` only models `vendor_ref`-scoped
+facts — §8's entity definition also allows `object_ref`-scoped facts (e.g. customer reputation for
+Phase 4's Go/No-Go, §7.1's "репутация заказчика"), which is out of scope here and would be a
+separate future task if/when Phase 4 needs it.
+
+**Owner follow-up needed:** Yes, non-blocking for now. `D-VND-REP` (the reputation-coefficient
+formula) needs an explicit research/approval gate before 3.C/3.D can compute a real weighted
+availability status or TCO risk-reserve term — tracked the same way `D-TAX` tracks the UOM/FX/VAT
+coefficient gap for this phase.
