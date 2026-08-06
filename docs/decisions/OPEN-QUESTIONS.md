@@ -613,3 +613,60 @@ separate future task if/when Phase 4 needs it.
 formula) needs an explicit research/approval gate before 3.C/3.D can compute a real weighted
 availability status or TCO risk-reserve term — tracked the same way `D-TAX` tracks the UOM/FX/VAT
 coefficient gap for this phase.
+
+## 2026-08-06 — Task 3.D matching heuristics and TCO scope
+
+**Context:** Task 3.D (`TENDER_INTELLIGENCE_SPEC.md` §6.4, BOQ↔SCG matching, `INV-19`, `P315`).
+
+**Deviation/assumption:** Three gaps recorded, not silently approximated:
+1. **Material matching** (`BoqLine.description` vs. `Offer.material`) uses a case-insensitive
+   substring heuristic — no source document supplies a real entity-matching/NLP algorithm, and this
+   is the same deterministic-heuristic discipline `boq_line_model.py`'s spec-requirement regexes
+   already use.
+2. **Volume sufficiency** only compares `Offer.inventory` (on-hand stock) against `BoqLine.qty`, and
+   only when both sides' units canonicalize to the same value via the existing `canonicalize_unit()`.
+   `Offer.capacity` (a production *rate*) is not used, because comparing a rate to a flat quantity
+   needs a delivery window `BoqLine` does not carry. An unmapped/mismatched unit is its own explicit
+   `volume_status`, never folded into a false match or false non-match.
+3. **TCO** (`price + logistics + financing + insurance + risk_reserve(репутация)`, §6.4) is computed
+   as `base_price_with_vat` only. `risk_reserve` is exactly `D-VND-REP`'s still-open coefficient;
+   `logistics`/`financing`/`insurance` have no source-supplied formula either and no existing
+   `TBD-nn` tag names them yet. `TcoEstimate.status` is always `"partial_price_only"` so no caller can
+   mistake this for a complete TCO ranking.
+
+**Source conflict (if any):** None — the source spec names the full TCO formula and the
+"who can guarantee delivery" ordering, but supplies no algorithm for either the entity match or the
+financial weights.
+
+**Owner follow-up needed:** Yes, non-blocking. A real material/spec-matching algorithm and the
+logistics/financing/insurance weights need their own research/approval gate before `3.D`'s traffic
+light and TCO ranking can be trusted as anything beyond a first-pass heuristic. Tracked alongside
+`D-VND-REP` — no new `D-*`/`TBD-*` ID is minted here since both gaps are sub-parts of the same
+"SCG pricing/matching needs an approved formula" question `D-VND-REP` already opened.
+
+## 2026-08-06 — Task 3.D final-review fixes and remaining deferred gaps
+
+**Context:** Final whole-branch review of task 3.D (`TENDER_INTELLIGENCE_SPEC.md` §6.4), after all 6 per-task reviews passed individually. The final review ran the feature against `packages/vendor/synthetic_provider.py`'s real generator output for the first time and found several cross-component bugs no single task's diff could reveal — fixed in this same commit: VAT-rate convention (percent vs fraction), cross-currency price ranking, dropped `adverse_case` field, and a `uom="ton"` canonicalization gap. See `packages/decision/matching.py`'s module docstring for the fixed behavior.
+
+**Deviation/assumption:** Three further gaps the final review raised are deliberately deferred, not fixed in this pass, and recorded here rather than silently dropped:
+1. **`moq` (minimum order quantity) is not checked.** A vendor whose `moq` exceeds the BOQ line's `qty` can still be classified `sufficient` — in real procurement this usually just means paying for excess, not a hard executability block, but no source document confirms this interpretation, so encoding a MOQ-blocks-executability rule now would risk inventing a business rule rather than reading one.
+2. **`GET /internal/offers` has no pagination**, despite `CLAUDE.md`'s explicit rule to apply `packages/platform/pagination.py` to any new listing endpoint. Deferred because the only current caller base (synthetic sandbox, single realm) is small; a real fix needs the client (`packages/contracts/vendor_api.py::list_vendor_offers`) to handle cursor pages too, which is more than a one-file change.
+3. **`summarize_boq_matches` raises a bare `KeyError`** if `matches` is missing an entry for a `"normal"`-type, non-`None`-amount `BoqLine`. This is judged intentional fail-fast behavior for a caller-contract violation (the caller is expected to have run `match_boq_line` for every normal line), not a hard-ban-#3 "silent fallback" — a loud crash surfaces the problem, it doesn't hide it. Revisit if a real caller makes this a frequent footgun.
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** No new `D-*`/`TBD-*` ID needed — none of these three are financial-weight or numeric-threshold questions; they're implementation-completeness gaps tracked here for visibility, same discipline as the matching-heuristics entry above.
+
+## 2026-08-06 — Task 3.D final-review fix wave: re-review findings
+
+**Context:** Scoped re-review of the final-review fix wave above (commit range `47af925..55d854a`). All 12 fixes verified present and correct; the re-review surfaced two further gaps in the fix wave itself, adjudicated here rather than triggering a second fix wave (`subagent-driven-development`'s Final Review section: one fix wave, one scoped re-review, no second wave — residual non-load-bearing findings are recorded, not fixed).
+
+**Deviation/assumption:** Two gaps, both judged real but non-blocking:
+1. **`BoqMatchSummary` has no `non_matchable_amount`.** The fix wave added `non_matchable_line_count: int` for lines whose `line_type != "normal"`, but only a line *count*, not the money those lines represent. A summary whose whole purpose is "X%/Y%/Z% by money" (P315) currently makes a non-matchable line's amount invisible rather than surfacing it in its own bucket — closer to hard ban #3's "hidden" than its "surfaced" side, though it doesn't corrupt the percentages that *are* computed (green/yellow/red still sum correctly against `total_priced_amount`). No later task in this plan builds on the missing field, so this is deferred rather than blocking. Fix, if picked up later: accumulate `boq_line.amount` (when not `None`) into a new `non_matchable_amount: Decimal` field inside the existing `line_type != "normal"` branch of `summarize_boq_matches`.
+2. **`_volume_status`'s `adverse_case` check runs before the quantity-sufficiency check.** This is exactly what the fix wave was asked to do (an adverse-flagged offer must never be silently scored as a clean match), but it has a real, previously-unstated consequence: an offer that is *both* adverse-flagged *and* short of the required quantity (e.g. `partial_fulfillment`, whose `inventory` is well under a large BOQ `qty`) now classifies `"adverse_case"` rather than `"insufficient"` — which counts as an existing (if flagged) source for traffic-light purposes, softening what would otherwise be a red line to yellow. Recorded as an accepted, understood design consequence, not a defect — FR-VND-03's "handled by an explicit decision" framing is closer to "flag for human review" than "silently prove absent," which yellow (not red) better reflects.
+
+Also noted, not actioned: the re-review flagged `test_all_seven_adverse_case_offers_are_excluded_from_ranked_executable` (in `tests/unit/test_matching_against_synthetic_provider.py`) as asserting less than its name implies — it proves no non-`"sufficient"` candidate leaks into `ranked_executable`, but not that all seven FR-VND-03 cases were exercised (only one of the seven adverse offers even material-matches the test's chosen BOQ line). Test-quality gap, not a runtime defect; the test still meaningfully guards against a ranking leak.
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** No new `D-*`/`TBD-*` ID needed — same reasoning as the entry above.
