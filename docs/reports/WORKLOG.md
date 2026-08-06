@@ -761,3 +761,60 @@ carry forward unchanged) once Phase 7 real vendor onboarding designs its own cre
 prior entries.
 
 **Блокеры:** нет новых.
+
+## 2026-08-06 — Phase 3, task 3.B (SCG): reputation layer — `TENDER_INTELLIGENCE_SPEC.md` §6.2
+
+**Note on task numbering:** this is `TENDER_INTELLIGENCE_SPEC.md` §6's own "3.B" (reputation layer),
+not `PLAN-MISSION-3.md`'s "3.B" (tenant isolation, closed just above in this file) — the two
+documents both use "3.B" for different content. Recorded explicitly in
+`docs/decisions/OPEN-QUESTIONS.md` (2026-08-06, `D-VND-REP` entry) so this doesn't read as a
+duplicate or a mistake later.
+
+**Сделано:**
+- Plan `docs/superpowers/plans/2026-08-06-phase3-task3b-scg-reputation-layer.md`, executed inline.
+  Owner chose to build the reputation layer (§6.2) as a prerequisite before tasks 3.C (Executable
+  Availability, §6.3) and 3.D (BOQ↔SCG matching, §6.4) — both name `INV-19` reputation weighting as
+  load-bearing, and building them first would have meant either inventing that coefficient or
+  stubbing it as `TBD` everywhere it's used; owner preferred a real (if synthetic) reputation layer
+  first.
+- `migrations/0011_vendor_reputation.sql` — `vendor_reputation_facts` table, same explicit
+  `data_realm`/`watermark` CHECK-pairing discipline as `migrations/0009_vendor_sandbox.sql`. Schema
+  ledger version bumped 10→11; every hardcoded `10` referring to the real current schema version
+  bumped to `11` (the deliberate mismatch value `99` left untouched, same discipline as prior
+  version-bump follow-ups).
+- `packages/vendor/reputation_model.py` — `ReputationFact` frozen dataclass; event types taken
+  directly from §6.2's own examples (`price_held_after_win`/`price_broken_after_win`,
+  `delivered_on_time`/`missed_deadline` — `missed_deadline` is `P313`'s own worked example,
+  `certification_verified`/`quality_complaint`, `financial_discipline_breach`,
+  `resold_reserved_stock_under_pressure`); `is_negative_event()` raises on an unknown type rather than
+  guessing, and the dataclass's `__post_init__` calls it so a bad `event_type` fails at construction.
+- `packages/vendor/synthetic_reputation.py` — `generate_reputation_facts()`, same seed-determinism
+  discipline as `synthetic_provider.py`: a deterministic split (every third vendor by input position
+  gets a negative-only history, the rest get positive-only) so 3.C/3.D will later have a real
+  contrast between reliable and unreliable vendors to test against.
+- `packages/vendor/reputation_store.py` — `store_reputation_fact()`; `list_active_reputation_facts()`
+  (TTL-aware: `observed_at + ttl_days` expiry, strict `>` so a fact exactly at its boundary is
+  excluded — proven by a dedicated boundary test, not just an approximate "old facts don't show up"
+  check).
+- **Deliberately not built, recorded not silently skipped:** `INV-19`'s trust-coefficient formula
+  (no source document supplies an approved weighting, and `INV-19` ties it to SCG prices — a
+  financial-adjacent number this task does not invent); the ownership-change TTL reset §6.2 describes
+  (no ownership concept exists on `Vendor` yet — TTL here is a plain expiry). Both recorded as a new
+  open decision, `D-VND-REP`, in `docs/decisions/OPEN-QUESTIONS.md`.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q
+311 passed, 33 skipped in 178.13s (0:02:58)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+222 files already formatted / All checks passed! / Success: no issues found in 72 source files / PASS: v1 untouched (no forbidden path literals, no baseline drift)
+```
+
+**Дальше:** the reputation layer's raw-fact mechanism is real and proven (synthetic-only, same
+`ADR-0004` discipline as the rest of Phase 3). `D-VND-REP` (the coefficient formula) needs an
+explicit research/approval gate before 3.C/3.D can compute a real weighted availability status or
+TCO risk-reserve term — but both tasks can still start against raw `ReputationFact` rows without
+that formula. Natural next Phase 3 work: 3.C (Executable Availability) or 3.D (BOQ↔SCG matching),
+either consuming raw reputation facts directly rather than a collapsed coefficient.
+
+**Блокеры:** нет новых. `D-VND-REP` is non-blocking (see above).
