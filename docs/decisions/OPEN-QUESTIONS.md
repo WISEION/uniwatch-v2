@@ -656,3 +656,17 @@ light and TCO ranking can be trusted as anything beyond a first-pass heuristic. 
 **Source conflict (if any):** None.
 
 **Owner follow-up needed:** No new `D-*`/`TBD-*` ID needed — none of these three are financial-weight or numeric-threshold questions; they're implementation-completeness gaps tracked here for visibility, same discipline as the matching-heuristics entry above.
+
+## 2026-08-06 — Task 3.D final-review fix wave: re-review findings
+
+**Context:** Scoped re-review of the final-review fix wave above (commit range `47af925..55d854a`). All 12 fixes verified present and correct; the re-review surfaced two further gaps in the fix wave itself, adjudicated here rather than triggering a second fix wave (`subagent-driven-development`'s Final Review section: one fix wave, one scoped re-review, no second wave — residual non-load-bearing findings are recorded, not fixed).
+
+**Deviation/assumption:** Two gaps, both judged real but non-blocking:
+1. **`BoqMatchSummary` has no `non_matchable_amount`.** The fix wave added `non_matchable_line_count: int` for lines whose `line_type != "normal"`, but only a line *count*, not the money those lines represent. A summary whose whole purpose is "X%/Y%/Z% by money" (P315) currently makes a non-matchable line's amount invisible rather than surfacing it in its own bucket — closer to hard ban #3's "hidden" than its "surfaced" side, though it doesn't corrupt the percentages that *are* computed (green/yellow/red still sum correctly against `total_priced_amount`). No later task in this plan builds on the missing field, so this is deferred rather than blocking. Fix, if picked up later: accumulate `boq_line.amount` (when not `None`) into a new `non_matchable_amount: Decimal` field inside the existing `line_type != "normal"` branch of `summarize_boq_matches`.
+2. **`_volume_status`'s `adverse_case` check runs before the quantity-sufficiency check.** This is exactly what the fix wave was asked to do (an adverse-flagged offer must never be silently scored as a clean match), but it has a real, previously-unstated consequence: an offer that is *both* adverse-flagged *and* short of the required quantity (e.g. `partial_fulfillment`, whose `inventory` is well under a large BOQ `qty`) now classifies `"adverse_case"` rather than `"insufficient"` — which counts as an existing (if flagged) source for traffic-light purposes, softening what would otherwise be a red line to yellow. Recorded as an accepted, understood design consequence, not a defect — FR-VND-03's "handled by an explicit decision" framing is closer to "flag for human review" than "silently prove absent," which yellow (not red) better reflects.
+
+Also noted, not actioned: the re-review flagged `test_all_seven_adverse_case_offers_are_excluded_from_ranked_executable` (in `tests/unit/test_matching_against_synthetic_provider.py`) as asserting less than its name implies — it proves no non-`"sufficient"` candidate leaks into `ranked_executable`, but not that all seven FR-VND-03 cases were exercised (only one of the seven adverse offers even material-matches the test's chosen BOQ line). Test-quality gap, not a runtime defect; the test still meaningfully guards against a ranking leak.
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** No new `D-*`/`TBD-*` ID needed — same reasoning as the entry above.
