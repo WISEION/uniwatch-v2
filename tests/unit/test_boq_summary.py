@@ -53,11 +53,11 @@ def test_summarize_boq_matches_computes_percentage_by_money():
 
 
 def test_summarize_boq_matches_surfaces_unpriced_lines_without_hiding_them():
-    boq_lines = [_boq_line(1, "600"), _boq_line(2, None)]
-    matches = {1: _match(1, "green"), 2: _match(2, "red")}
+    boq_lines = [_boq_line(1, "600"), _boq_line(2, None), _boq_line(3, None)]
+    matches = {1: _match(1, "green"), 2: _match(2, "red"), 3: _match(3, "yellow")}
 
     summary = summarize_boq_matches(boq_lines, matches)
 
-    assert summary.unpriced_amount == Decimal("0")
+    assert summary.unpriced_line_count == 2
     assert summary.total_priced_amount == Decimal("600")
     assert summary.green_pct == 100.0

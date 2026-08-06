@@ -1,7 +1,7 @@
 """BOQ-wide traffic-light summary by money (task 3.D, P315:
 "BOQ раскрашен ... выдаётся сводка «X% зелёного / Y% жёлтого / Z%
 красного по деньгам»"). A line with no `amount` (source never supplied
-one) is counted in `unpriced_amount`, never silently dropped from the
+one) is counted in `unpriced_line_count`, never silently dropped from the
 picture or folded into 0% (AGENTS.md hard ban #3)."""
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ class BoqMatchSummary:
     green_amount: Decimal
     yellow_amount: Decimal
     red_amount: Decimal
-    unpriced_amount: Decimal
+    unpriced_line_count: int
     total_priced_amount: Decimal
     green_pct: float
     yellow_pct: float
@@ -27,12 +27,12 @@ class BoqMatchSummary:
 
 def summarize_boq_matches(boq_lines: list[BoqLine], matches: dict[int, BoqLineMatch]) -> BoqMatchSummary:
     amounts_by_light: dict[str, Decimal] = {"green": Decimal("0"), "yellow": Decimal("0"), "red": Decimal("0")}
-    unpriced_amount = Decimal("0")
+    unpriced_line_count = 0
 
     for boq_line in boq_lines:
         match = matches[boq_line.source_line_id]
         if boq_line.amount is None:
-            unpriced_amount += Decimal("0")
+            unpriced_line_count += 1
             continue
         amounts_by_light[match.traffic_light] += boq_line.amount
 
@@ -47,7 +47,7 @@ def summarize_boq_matches(boq_lines: list[BoqLine], matches: dict[int, BoqLineMa
         green_amount=amounts_by_light["green"],
         yellow_amount=amounts_by_light["yellow"],
         red_amount=amounts_by_light["red"],
-        unpriced_amount=unpriced_amount,
+        unpriced_line_count=unpriced_line_count,
         total_priced_amount=total_priced_amount,
         green_pct=pct(amounts_by_light["green"]),
         yellow_pct=pct(amounts_by_light["yellow"]),
