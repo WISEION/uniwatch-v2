@@ -7,7 +7,7 @@ testable without Postgres.
 
 Unit canonicalization only maps units actually observed in real captured
 fixtures (see MANIFEST.md) plus a handful of unambiguous SI/construction
-units (m2, m3, kg, t, l) certain to appear in any BOQ. An unrecognized unit
+units (m2, m3, kg, t, ton, l) certain to appear in any BOQ. An unrecognized unit
 is never guessed at -- it is flagged `unmapped` and the raw string is kept,
 so a downstream matching/calculation step can see exactly which lines have
 an unresolved unit rather than silently trusting a wrong canonicalization
@@ -30,6 +30,7 @@ _UNIT_CANONICAL_MAP: dict[str, str] = {
     "m³": "m3",
     "kg": "kg",
     "t": "t",
+    "ton": "t",
     "l": "l",
 }
 

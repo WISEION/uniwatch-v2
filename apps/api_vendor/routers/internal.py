@@ -15,7 +15,13 @@ caller would be pure ceremony for no isolation benefit within one service.
 Deliberately UNAUTHENTICATED, same gap as /internal/ping: real
 service-to-service auth is deferred by ADR-0006 to the still-open
 D-IDP/D-HOST decisions -- recorded in docs/decisions/OPEN-QUESTIONS.md, not
-silently assumed secure."""
+silently assumed secure. This endpoint IS the case a prior version of this
+file's docstring warned about: it carries real (currently sandbox-realm,
+ADR-0004) vendor business data -- price, inventory, reputation flags --
+across the service boundary with no auth. This is a live, tracked
+exposure (mitigated today only by ADR-0004's synthetic-only realm), not a
+precedent to copy uncritically for a future endpoint that might carry real
+(non-synthetic) vendor data."""
 
 from __future__ import annotations
 

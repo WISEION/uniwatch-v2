@@ -49,7 +49,8 @@ def _offer(
     has_positive_reputation: bool = False,
     has_negative_reputation: bool = False,
     price: float = 120.0,
-    vat_rate: float = 0.18,
+    vat_rate: float = 18.0,
+    currency: str = "AZN",
 ) -> VendorOfferDTO:
     return VendorOfferDTO(
         id=1,
@@ -59,7 +60,7 @@ def _offer(
         watermark="SYNTHETIC",
         material=material,
         price=price,
-        currency="AZN",
+        currency=currency,
         vat_rate=vat_rate,
         uom=uom,
         uom_canonical_qty=1.0,
@@ -255,3 +256,47 @@ def test_match_boq_line_dedupes_duplicate_vendor_id_when_counting_sources():
     match = match_boq_line(boq_line, offers, as_of=AS_OF)
 
     assert match.traffic_light == "yellow"
+
+
+def test_classify_candidate_flags_adverse_case_offers():
+    boq_line = _boq_line()
+    offer = _offer()
+    offer_with_adverse_case = offer.model_copy(update={"adverse_case": "moq_conflict"})
+
+    candidate = classify_candidate(boq_line, offer_with_adverse_case, as_of=AS_OF)
+
+    assert candidate.volume_status == "adverse_case"
+
+
+def test_match_boq_line_never_reaches_green_or_ranked_when_source_has_adverse_case():
+    boq_line = _boq_line()
+    offer = _offer(vendor_id=1, vendor_name="Vendor A", has_positive_reputation=True)
+    offer_with_adverse_case = offer.model_copy(update={"adverse_case": "capacity_shortfall"})
+    offers = [
+        offer_with_adverse_case,
+        _offer(vendor_id=2, vendor_name="Vendor B", has_positive_reputation=True),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    # Yellow, not green: the adverse-case offer still counts as "a source
+    # exists" (so not red) but never as a *confirmed* one, so only one
+    # vendor is confirmed-fresh-and-sufficient. The adverse-case Vendor A is
+    # likewise absent from ranked_executable; the clean Vendor B is the only
+    # entry (excluding a clean co-candidate too would be wrong -- the
+    # exclusion is per-offer, via the "sufficient" allowlist).
+    assert match.traffic_light == "yellow"
+    assert [c.volume_status for c in match.candidates] == ["adverse_case", "sufficient"]
+    assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor B"]
+
+
+def test_rank_executable_candidates_by_tco_excludes_a_different_currency():
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", price=100.0, currency="AZN", has_positive_reputation=True),
+        _offer(vendor_id=2, vendor_name="Vendor B", price=50.0, currency="USD"),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor A"]

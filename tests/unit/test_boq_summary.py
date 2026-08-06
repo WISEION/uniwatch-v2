@@ -5,12 +5,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from packages.decision.boq_summary import summarize_boq_matches
 from packages.decision.matching import BoqLineMatch
 from packages.tender.boq_line_model import BoqLine
 
 
-def _boq_line(source_line_id: int, amount: str | None) -> BoqLine:
+def _boq_line(source_line_id: int, amount: str | None, line_type: str = "normal") -> BoqLine:
     return BoqLine(
         source_line_id=source_line_id,
         page_number=1,
@@ -21,7 +23,7 @@ def _boq_line(source_line_id: int, amount: str | None) -> BoqLine:
         unit_canonical="t",
         unit_status="mapped",
         qty=Decimal("1"),
-        line_type="normal",
+        line_type=line_type,
         spec_requirements=(),
         rate=Decimal("100") if amount is not None else None,
         amount=Decimal(amount) if amount is not None else None,
@@ -61,3 +63,18 @@ def test_summarize_boq_matches_surfaces_unpriced_lines_without_hiding_them():
     assert summary.unpriced_line_count == 2
     assert summary.total_priced_amount == Decimal("600")
     assert summary.green_pct == 100.0
+
+
+def test_summarize_boq_matches_excludes_non_matchable_line_types_from_percentages():
+    boq_lines = [
+        _boq_line(1, "600", line_type="normal"),
+        _boq_line(2, "300", line_type="normal"),
+        _boq_line(3, "9999", line_type="preliminaries"),
+    ]
+    matches = {1: _match(1, "green"), 2: _match(2, "yellow")}
+
+    summary = summarize_boq_matches(boq_lines, matches)
+
+    assert summary.non_matchable_line_count == 1
+    assert summary.total_priced_amount == Decimal("900")
+    assert summary.green_pct == pytest.approx(66.666666, rel=1e-4)

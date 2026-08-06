@@ -643,3 +643,16 @@ logistics/financing/insurance weights need their own research/approval gate befo
 light and TCO ranking can be trusted as anything beyond a first-pass heuristic. Tracked alongside
 `D-VND-REP` — no new `D-*`/`TBD-*` ID is minted here since both gaps are sub-parts of the same
 "SCG pricing/matching needs an approved formula" question `D-VND-REP` already opened.
+
+## 2026-08-06 — Task 3.D final-review fixes and remaining deferred gaps
+
+**Context:** Final whole-branch review of task 3.D (`TENDER_INTELLIGENCE_SPEC.md` §6.4), after all 6 per-task reviews passed individually. The final review ran the feature against `packages/vendor/synthetic_provider.py`'s real generator output for the first time and found several cross-component bugs no single task's diff could reveal — fixed in this same commit: VAT-rate convention (percent vs fraction), cross-currency price ranking, dropped `adverse_case` field, and a `uom="ton"` canonicalization gap. See `packages/decision/matching.py`'s module docstring for the fixed behavior.
+
+**Deviation/assumption:** Three further gaps the final review raised are deliberately deferred, not fixed in this pass, and recorded here rather than silently dropped:
+1. **`moq` (minimum order quantity) is not checked.** A vendor whose `moq` exceeds the BOQ line's `qty` can still be classified `sufficient` — in real procurement this usually just means paying for excess, not a hard executability block, but no source document confirms this interpretation, so encoding a MOQ-blocks-executability rule now would risk inventing a business rule rather than reading one.
+2. **`GET /internal/offers` has no pagination**, despite `CLAUDE.md`'s explicit rule to apply `packages/platform/pagination.py` to any new listing endpoint. Deferred because the only current caller base (synthetic sandbox, single realm) is small; a real fix needs the client (`packages/contracts/vendor_api.py::list_vendor_offers`) to handle cursor pages too, which is more than a one-file change.
+3. **`summarize_boq_matches` raises a bare `KeyError`** if `matches` is missing an entry for a `"normal"`-type, non-`None`-amount `BoqLine`. This is judged intentional fail-fast behavior for a caller-contract violation (the caller is expected to have run `match_boq_line` for every normal line), not a hard-ban-#3 "silent fallback" — a loud crash surfaces the problem, it doesn't hide it. Revisit if a real caller makes this a frequent footgun.
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** No new `D-*`/`TBD-*` ID needed — none of these three are financial-weight or numeric-threshold questions; they're implementation-completeness gaps tracked here for visibility, same discipline as the matching-heuristics entry above.
