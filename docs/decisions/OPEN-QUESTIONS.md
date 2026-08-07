@@ -682,3 +682,15 @@ Also noted, not actioned: the re-review flagged `test_all_seven_adverse_case_off
 **Source conflict (if any):** None — the spec names the four tiers and the one qualitative reputation example; it does not name the coefficient formula or mandate that 3.C rewire 3.D's already-closed matching logic in the same task.
 
 **Owner follow-up needed:** Yes, non-blocking. Two follow-ups, both deferred rather than decided silently: (a) whether/when to replace `matching.py`'s `volume_status`+`freshness` executability proxy with `effective_executable_status` — a real design change to already-reviewed code, better done as its own scoped task with its own test-suite pass, not folded into this one; (b) `D-VND-REP`'s numeric coefficient, unchanged from the 2026-08-06 entry, still needed before any TCO `risk_reserve(reputation)` term or a symmetric upgrade rule can be justified as anything but invented.
+
+**Follow-up (a) closed 2026-08-07** — see the entry immediately below.
+
+## 2026-08-07 — Task 3.C follow-up: wired `effective_executable_status` into 3.D's matching
+
+**Context:** Closes follow-up (a) from the entry directly above. `packages/decision/matching.py` (task 3.D) previously gated green/`ranked_executable` on `volume_status == "sufficient" and freshness == "fresh"` only — never looking at the Executable Availability status this task added. `TENDER_INTELLIGENCE_SPEC.md` §6.4 step 1 asks "who can **guaranteed**ly deliver" (`гарантированно`), which an unverified vendor claim (`reported`/`unknown`) does not satisfy on its own, however fresh or well-priced.
+
+**Deviation/assumption:** None beyond what's already recorded above — this is the planned follow-up itself, not a new gap. One design choice worth naming: `_is_strong_source()` (new helper, used by both `_traffic_light` and `rank_executable_candidates_by_tco`) only *tightens* the existing gate, never loosens it — a `reported`/`unknown` source still counts as "a source exists" (never flips a line to red on its own, same treatment as an adverse-case offer already got in task 3.D), it just can never be one of the ≥2 strong sources green requires, and never enters `ranked_executable`. No existing task-3.D test needed to change: the test factory's `executable_status` default (`"confirmed"`) keeps every pre-existing fixture "strong" under the new gate.
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** No — this closes the recorded follow-up. `D-VND-REP`'s numeric coefficient (follow-up (b) above) remains the only open item from task 3.C.

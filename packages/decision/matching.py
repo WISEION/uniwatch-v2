@@ -51,7 +51,22 @@ TCO here is base_price_with_vat only -- logistics/financing/insurance/
 risk_reserve(reputation) have no source-supplied formula (D-VND-REP covers
 the reputation term; see docs/decisions/OPEN-QUESTIONS.md for the rest),
 so `TcoEstimate.status` is always "partial_price_only", never a silent 0
-for the missing terms."""
+for the missing terms.
+
+Executable Availability (task 3.C, TENDER_INTELLIGENCE_SPEC.md Section6.3,
+INV-19, P314) gates both the traffic light and the TCO ranking: a source
+only counts as "strong" (`_is_strong_source`) when its
+`effective_executable_status` -- the vendor's raw claim, downgraded one
+tier if it carries a negative ReputationFact, see
+packages/vendor/availability_model.py -- is `reserved` or `confirmed`, not
+merely `reported`/`unknown`. This is Section6.4 step 1's "гарантированно"
+(*guaranteed* delivery), read literally: a source whose only evidence is an
+unverified vendor claim is not "guaranteed", regardless of how fresh or
+well-priced it looks. `reported`/`unknown` sources still count toward "a
+source exists" (never red) exactly like an adverse-case offer does -- they
+are excluded from green/ranked_executable via this dedicated status check,
+never silently folded into either a match or a non-match verdict (hard ban
+#3)."""
 
 from __future__ import annotations
 
@@ -75,6 +90,8 @@ class MatchCandidate:
     currency: str
     freshness: str  # "fresh" | "stale"
     volume_status: str  # "sufficient" | "insufficient" | "unit_mismatch" | "unit_unmapped" | "adverse_case"
+    executable_status: str  # raw tier: "reserved" | "confirmed" | "reported" | "unknown"
+    effective_executable_status: str  # same tiers, after INV-19's reputation downgrade
     has_positive_reputation: bool
     has_negative_reputation: bool
     price_with_vat: Decimal
@@ -136,9 +153,19 @@ def classify_candidate(boq_line: BoqLine, offer: VendorOfferDTO, *, as_of: datet
         currency=offer.currency,
         freshness=_freshness(offer, as_of),
         volume_status=_volume_status(boq_line, offer),
+        executable_status=offer.executable_status,
+        effective_executable_status=offer.effective_executable_status,
         has_positive_reputation=offer.has_positive_reputation,
         has_negative_reputation=offer.has_negative_reputation,
         price_with_vat=_price_with_vat(offer),
+    )
+
+
+def _is_strong_source(candidate: MatchCandidate) -> bool:
+    return (
+        candidate.volume_status == "sufficient"
+        and candidate.freshness == "fresh"
+        and candidate.effective_executable_status in ("reserved", "confirmed")
     )
 
 
@@ -146,7 +173,7 @@ def _traffic_light(candidates: tuple[MatchCandidate, ...]) -> str:
     sources = tuple(c for c in candidates if c.volume_status != "insufficient")
     if not sources:
         return "red"
-    confirmed_fresh_by_vendor = {c.vendor_id: c for c in sources if c.volume_status == "sufficient" and c.freshness == "fresh"}
+    confirmed_fresh_by_vendor = {c.vendor_id: c for c in sources if _is_strong_source(c)}
     if len(confirmed_fresh_by_vendor) >= 2 and any(c.has_positive_reputation for c in confirmed_fresh_by_vendor.values()):
         return "green"
     return "yellow"
@@ -155,7 +182,7 @@ def _traffic_light(candidates: tuple[MatchCandidate, ...]) -> str:
 def rank_executable_candidates_by_tco(
     candidates: tuple[MatchCandidate, ...],
 ) -> tuple[tuple[MatchCandidate, TcoEstimate], ...]:
-    executable = [c for c in candidates if c.volume_status == "sufficient" and c.freshness == "fresh"]
+    executable = [c for c in candidates if _is_strong_source(c)]
     if not executable:
         return ()
     currency_counts: dict[str, int] = {}
