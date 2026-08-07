@@ -6,10 +6,14 @@ picture or folded into 0% (AGENTS.md hard ban #3). A line whose
 `line_type` is not "normal" (preliminaries/provisional_sum/prime_cost,
 packages/tender/boq_line_model.py's classify_line_type) is not
 vendor-matchable by nature and is counted separately in
-`non_matchable_line_count` rather than silently dragging down red_amount's
-percentage -- TENDER_INTELLIGENCE_SPEC.md §7.1's Bid/No-Bid ~85% coverage
-threshold is computed against this summary and would be systematically
-wrong otherwise. A non-matchable line needs no entry in `matches` at all."""
+`non_matchable_line_count`/`non_matchable_amount` rather than silently
+dragging down red_amount's percentage -- TENDER_INTELLIGENCE_SPEC.md §7.1's
+Bid/No-Bid ~85% coverage threshold is computed against this summary and
+would be systematically wrong otherwise. A non-matchable line needs no
+entry in `matches` at all. `non_matchable_amount` only sums lines that
+*have* an amount -- a non-matchable line can also be unpriced, and that
+money is honestly absent, not zero (same "don't invent a number" reasoning
+`unpriced_line_count` already applies to matchable lines)."""
 
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ class BoqMatchSummary:
     red_amount: Decimal
     unpriced_line_count: int
     non_matchable_line_count: int
+    non_matchable_amount: Decimal
     total_priced_amount: Decimal
     green_pct: float
     yellow_pct: float
@@ -37,10 +42,13 @@ def summarize_boq_matches(boq_lines: list[BoqLine], matches: dict[int, BoqLineMa
     amounts_by_light: dict[str, Decimal] = {"green": Decimal("0"), "yellow": Decimal("0"), "red": Decimal("0")}
     unpriced_line_count = 0
     non_matchable_line_count = 0
+    non_matchable_amount = Decimal("0")
 
     for boq_line in boq_lines:
         if boq_line.line_type != "normal":
             non_matchable_line_count += 1
+            if boq_line.amount is not None:
+                non_matchable_amount += boq_line.amount
             continue
         match = matches[boq_line.source_line_id]
         if boq_line.amount is None:
@@ -61,6 +69,7 @@ def summarize_boq_matches(boq_lines: list[BoqLine], matches: dict[int, BoqLineMa
         red_amount=amounts_by_light["red"],
         unpriced_line_count=unpriced_line_count,
         non_matchable_line_count=non_matchable_line_count,
+        non_matchable_amount=non_matchable_amount,
         total_priced_amount=total_priced_amount,
         green_pct=pct(amounts_by_light["green"]),
         yellow_pct=pct(amounts_by_light["yellow"]),
