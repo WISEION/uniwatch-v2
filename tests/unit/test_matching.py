@@ -1,8 +1,12 @@
 """Unit tests for packages/decision/matching.py (task 3.D,
-TENDER_INTELLIGENCE_SPEC.md §6.4, P315): inverted matching -- executability
-(source count, freshness, volume, raw reputation presence) before price.
-Pure functions, no DB -- VendorOfferDTO stands in for a real
-packages/contracts response."""
+TENDER_INTELLIGENCE_SPEC.md §6.4, P315, extended by task 3.C's Executable
+Availability, §6.3/INV-19/P314): inverted matching -- executability
+(source count, freshness, volume, executable status, raw reputation
+presence) before price. Pure functions, no DB -- VendorOfferDTO stands in
+for a real packages/contracts response. `_offer()`'s `executable_status`
+default ("confirmed") keeps every pre-existing test's offers "strong" under
+the new gate without having to touch each test individually -- only tests
+that exercise the gate itself override it."""
 
 from __future__ import annotations
 
@@ -51,6 +55,8 @@ def _offer(
     price: float = 120.0,
     vat_rate: float = 18.0,
     currency: str = "AZN",
+    executable_status: str = "confirmed",
+    effective_executable_status: str | None = None,
 ) -> VendorOfferDTO:
     return VendorOfferDTO(
         id=1,
@@ -72,8 +78,8 @@ def _offer(
         evidence_source="test",
         observed_at="2026-08-01T00:00:00+00:00",
         adverse_case=None,
-        executable_status="confirmed",
-        effective_executable_status="confirmed",
+        executable_status=executable_status,
+        effective_executable_status=effective_executable_status or executable_status,
         has_positive_reputation=has_positive_reputation,
         has_negative_reputation=has_negative_reputation,
     )
@@ -290,6 +296,101 @@ def test_match_boq_line_never_reaches_green_or_ranked_when_source_has_adverse_ca
     assert match.traffic_light == "yellow"
     assert [c.volume_status for c in match.candidates] == ["adverse_case", "sufficient"]
     assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor B"]
+
+
+def test_match_boq_line_downgrades_to_yellow_when_one_source_is_only_reported():
+    # P314: "наличие под вопросом" (availability in question) is yellow,
+    # same as a stale price or a lone source -- an unverified vendor claim
+    # is not "гарантированно" (guaranteed) per §6.4 step 1, even if the
+    # volume and freshness checks alone would pass.
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", has_positive_reputation=True, executable_status="confirmed"),
+        _offer(vendor_id=2, vendor_name="Vendor B", executable_status="reported"),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert match.traffic_light == "yellow"
+    assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor A"]
+
+
+def test_match_boq_line_is_green_when_a_reported_source_is_extra_alongside_two_strong_ones():
+    # A weak-availability source never blocks green -- it just doesn't
+    # count toward the 2-strong-sources requirement itself.
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", has_positive_reputation=True, executable_status="reserved"),
+        _offer(vendor_id=2, vendor_name="Vendor B", executable_status="confirmed"),
+        _offer(vendor_id=3, vendor_name="Vendor C", executable_status="reported"),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert match.traffic_light == "green"
+
+
+def test_rank_executable_candidates_by_tco_excludes_unknown_availability():
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", price=100.0, executable_status="confirmed"),
+        _offer(vendor_id=2, vendor_name="Vendor B", price=50.0, executable_status="unknown"),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor A"]
+
+
+def test_negative_reputation_downgraded_status_still_counts_as_strong_when_it_lands_on_confirmed():
+    # INV-19: a "reserved" claim from an unreliable vendor is worth about
+    # what "confirmed" is from a reliable one -- still strong, not excluded.
+    # (The downgrade itself is packages/vendor/availability_model.py's job;
+    # here the DTO simply carries the already-downgraded effective value,
+    # same as has_negative_reputation is already just a passed-through flag.)
+    boq_line = _boq_line()
+    offers = [
+        _offer(
+            vendor_id=1,
+            vendor_name="Vendor A",
+            has_positive_reputation=True,
+            executable_status="reserved",
+        ),
+        _offer(
+            vendor_id=2,
+            vendor_name="Vendor B",
+            has_negative_reputation=True,
+            executable_status="reserved",
+            effective_executable_status="confirmed",
+        ),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert match.traffic_light == "green"
+    assert len(match.ranked_executable) == 2
+
+
+def test_negative_reputation_downgraded_status_excludes_from_strong_when_it_lands_on_reported():
+    # The same downgrade, one tier further: "confirmed" -> "reported" is
+    # exactly the tier this task's gate excludes -- INV-19's reputation
+    # weighting now visibly changes the traffic light, not just a flag.
+    boq_line = _boq_line()
+    offers = [
+        _offer(vendor_id=1, vendor_name="Vendor A", has_positive_reputation=True, executable_status="confirmed"),
+        _offer(
+            vendor_id=2,
+            vendor_name="Vendor B",
+            has_negative_reputation=True,
+            executable_status="confirmed",
+            effective_executable_status="reported",
+        ),
+    ]
+
+    match = match_boq_line(boq_line, offers, as_of=AS_OF)
+
+    assert match.traffic_light == "yellow"
+    assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor A"]
 
 
 def test_rank_executable_candidates_by_tco_excludes_a_different_currency():

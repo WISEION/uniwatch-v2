@@ -897,4 +897,23 @@ The one deselected test beyond the usual 3 `live_network`-marked ones, `tests/se
 
 **Блокеры:** нет новых. `D-VND-REP` remains non-blocking (see above).
 
+## 2026-08-07 — Задание: Phase 3, task 3.C follow-up (wired into task 3.D's matching)
+
+**Сделано:**
+- `packages/decision/matching.py` — new `_is_strong_source()` helper: a candidate only counts toward green/`ranked_executable` when, in addition to the existing `volume_status == "sufficient"` and `freshness == "fresh"` checks, its `effective_executable_status` is `reserved` or `confirmed` — not merely `reported`/`unknown` (`TENDER_INTELLIGENCE_SPEC.md` §6.4 step 1's "гарантированно", P314). `MatchCandidate` gains `executable_status`/`effective_executable_status` (straight passthrough from the offer, same as `has_positive_reputation`/`has_negative_reputation` already were). `_traffic_light` and `rank_executable_candidates_by_tco` both switched to the new helper, replacing their previously-duplicated inline check. A weak-availability source still counts as "a source exists" (never forces red on its own), same treatment task 3.D already gave an adverse-case offer — it just can never be one of green's ≥2 strong sources, and never enters `ranked_executable`.
+- `tests/unit/test_matching.py` — `_offer()` factory gained `executable_status`/`effective_executable_status` overrides (default `"confirmed"`, keeping every pre-existing test's fixtures "strong" without touching them). Five new tests: weak-availability source downgrades green to yellow; a weak source alongside two strong ones doesn't block green; `unknown` availability excluded from `ranked_executable`; a reputation-downgraded `reserved`→`confirmed` still counts as strong (INV-19's one-tier rule landing exactly on the boundary); a reputation-downgraded `confirmed`→`reported` now visibly excludes a source from green — the first test in the branch where INV-19's reputation weighting changes the traffic light itself, not just a flag on the candidate.
+- This closes the follow-up (a) recorded in `docs/decisions/OPEN-QUESTIONS.md`'s 2026-08-07 task 3.C entry.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network" --deselect tests/security/test_worldbank_live_fetch.py::test_live_fetch_against_real_worldbank_api
+359 passed, 33 skipped, 4 deselected in 155.72s (0:02:35)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+231 files already formatted / All checks passed! / Success: no issues found in 75 source files / PASS: v1 untouched
+```
+
+**Дальше:** task 3.D's matching now genuinely reflects task 3.C's Executable Availability, not just its own narrower proxy — Phase 3's exit-gate items (P312/P313/P314/P315) are all real and connected to each other, not four isolated slices. Remaining open item for Phase 3: `D-VND-REP`'s numeric reputation coefficient (needed for a real TCO `risk_reserve(reputation)` term or a symmetric availability-upgrade rule) — everything else that can be built without inventing that number is now built.
+
+**Блокеры:** нет новых. `D-VND-REP` remains non-blocking.
+
 **Блокеры:** нет новых. Both parked re-review gaps are non-blocking (see `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-06).
