@@ -916,4 +916,24 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 
 **Блокеры:** нет новых. `D-VND-REP` remains non-blocking.
 
+## 2026-08-07 — Задание: two cheap follow-ups from the task 3.D final-review fix wave
+
+**Сделано:**
+- `packages/decision/boq_summary.py::BoqMatchSummary` gains `non_matchable_amount: Decimal` — sums `boq_line.amount` (when present) for every non-`"normal"`-type line, inside the existing branch that increments `non_matchable_line_count`; a non-matchable line that's also unpriced contributes to the count but not the amount (money honestly absent, not zero). Percentages unaffected.
+- `packages/decision/matching.py::MatchCandidate` gains `adverse_case: str | None`, passed straight through from `offer.adverse_case` in `classify_candidate` — a flagged line's FR-VND-03 sub-type (`moq_conflict`, `capacity_shortfall`, etc.) is now visible on the candidate itself, not just the bare `volume_status == "adverse_case"` label.
+- Tests: `tests/unit/test_boq_summary.py` — new assertion on the existing non-matchable test plus a new test proving an unpriced non-matchable line doesn't get counted as `0` vs. left absent. `tests/unit/test_matching.py` — new test proving `adverse_case` is `None` for a clean offer, an assertion added to the existing adverse-case test, and the existing two-candidate (adverse + clean) test now asserts the sub-type list directly. `tests/unit/test_matching_against_synthetic_provider.py` — the one real-generator adverse candidate now asserted as `"mixed_uom"`.
+- Both were the two remaining items recorded as "cheap follow-ups if picked up incidentally" in the 2026-08-06 final-review re-review entry — closed now, not scheduled separately. See `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-07.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network" --deselect tests/security/test_worldbank_live_fetch.py::test_live_fetch_against_real_worldbank_api
+361 passed, 33 skipped, 4 deselected in 289.51s (0:04:49)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+231 files already formatted / All checks passed! / Success: no issues found in 75 source files / PASS: v1 untouched
+```
+
+**Дальше:** no parked task-3.D gaps remain. The only open item across Phase 3 is `D-VND-REP`'s numeric reputation coefficient, unchanged.
+
+**Блокеры:** нет новых.
+
 **Блокеры:** нет новых. Both parked re-review gaps are non-blocking (see `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-06).

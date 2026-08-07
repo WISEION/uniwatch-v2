@@ -671,6 +671,20 @@ Also noted, not actioned: the re-review flagged `test_all_seven_adverse_case_off
 
 **Owner follow-up needed:** No new `D-*`/`TBD-*` ID needed — same reasoning as the entry above.
 
+## 2026-08-07 — Closed both cheap follow-ups from the task 3.D final-review fix wave
+
+**Context:** The two gaps the 2026-08-06 "final-review fix wave: re-review findings" entry above recorded as "cheap follow-ups if picked up incidentally by later work" — picked up now, incidentally, rather than as their own scheduled task.
+
+**Resolved:**
+1. **`BoqMatchSummary` now has `non_matchable_amount: Decimal`.** `summarize_boq_matches` sums `boq_line.amount` (when not `None`) for every non-`"normal"`-type line into this new field, inside the same branch that already increments `non_matchable_line_count`. A non-matchable line that is *also* unpriced contributes to the line count but not the amount — its money is honestly absent, not zero, same reasoning `unpriced_line_count` already applies to matchable lines. `green_pct`/`yellow_pct`/`red_pct` are unaffected (still divide by `total_priced_amount`, which never included non-matchable lines).
+2. **`MatchCandidate` now carries `adverse_case: str | None`.** `classify_candidate` passes `offer.adverse_case` straight through, alongside the existing `volume_status == "adverse_case"` label. A human reviewing a flagged line can now tell *which* of FR-VND-03's seven sub-types it was without a separate lookup back to the raw offer.
+
+Neither change touches `_traffic_light`/`rank_executable_candidates_by_tco`'s decision logic — both are additive, read-only fields/sums layered on top of already-correct behavior confirmed by the prior re-review.
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** No — both items are now closed.
+
 ## 2026-08-07 — Task 3.C (Executable Availability): built the raw+effective status layer, deliberately not wired into 3.D's matching
 
 **Context:** Phase 3, task 3.C (`TENDER_INTELLIGENCE_SPEC.md` §6.3, P314). **Numbering note, same pattern as task 3.B's two entries above:** `PLAN-MISSION-3.md`'s own "3.C" names something unrelated (a synthetic-generator tooling task); this entry tracks `TENDER_INTELLIGENCE_SPEC.md`'s §6's "3.C" (Executable Availability), which is what `docs/reports/WORKLOG.md`'s task-3.D entries already forward-referenced as "natural next Phase 3 work."

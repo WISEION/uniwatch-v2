@@ -274,6 +274,16 @@ def test_classify_candidate_flags_adverse_case_offers():
     candidate = classify_candidate(boq_line, offer_with_adverse_case, as_of=AS_OF)
 
     assert candidate.volume_status == "adverse_case"
+    assert candidate.adverse_case == "moq_conflict"
+
+
+def test_classify_candidate_adverse_case_is_none_for_a_clean_offer():
+    boq_line = _boq_line()
+    offer = _offer()
+
+    candidate = classify_candidate(boq_line, offer, as_of=AS_OF)
+
+    assert candidate.adverse_case is None
 
 
 def test_match_boq_line_never_reaches_green_or_ranked_when_source_has_adverse_case():
@@ -295,6 +305,7 @@ def test_match_boq_line_never_reaches_green_or_ranked_when_source_has_adverse_ca
     # exclusion is per-offer, via the "sufficient" allowlist).
     assert match.traffic_light == "yellow"
     assert [c.volume_status for c in match.candidates] == ["adverse_case", "sufficient"]
+    assert [c.adverse_case for c in match.candidates] == ["capacity_shortfall", None]
     assert [c.vendor_name for c, _estimate in match.ranked_executable] == ["Vendor B"]
 
 

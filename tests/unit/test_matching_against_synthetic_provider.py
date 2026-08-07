@@ -96,6 +96,7 @@ def test_all_seven_adverse_case_offers_are_excluded_from_ranked_executable():
     # mixed_uom adverse case, which IS the same material "rebar-12mm").
     adverse_candidates = [c for c in match.candidates if c.material == "rebar-12mm" and c.volume_status == "adverse_case"]
     assert len(adverse_candidates) == 1
+    assert adverse_candidates[0].adverse_case == "mixed_uom"
     assert match.ranked_executable == () or all(c.volume_status == "sufficient" for c, _estimate in match.ranked_executable)
 
 

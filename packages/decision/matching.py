@@ -28,7 +28,11 @@ via its own status rather than silently scored as a clean match -- the
 generator's own docstring names this exclusion as this task's job. It
 still counts as an existing source (not "nobody has it") since the data
 isn't proven absent, just flagged as needing an explicit human decision
-per FR-VND-03.
+per FR-VND-03. `MatchCandidate.adverse_case` preserves which of the seven
+sub-types it was (`None` otherwise) -- an earlier version of this module
+collapsed it to the bare `"adverse_case"` volume_status and dropped the
+sub-type, leaving a human reviewing a flagged line with no way to tell
+"stale offer" from "capacity shortfall" without going back to the raw offer.
 
 `price_with_vat` treats `vat_rate` as a PERCENT (18.0 means 18%), matching
 the only real producer of this field, packages/vendor/synthetic_provider.py
@@ -90,6 +94,7 @@ class MatchCandidate:
     currency: str
     freshness: str  # "fresh" | "stale"
     volume_status: str  # "sufficient" | "insufficient" | "unit_mismatch" | "unit_unmapped" | "adverse_case"
+    adverse_case: str | None  # the FR-VND-03 sub-type when volume_status == "adverse_case", else None
     executable_status: str  # raw tier: "reserved" | "confirmed" | "reported" | "unknown"
     effective_executable_status: str  # same tiers, after INV-19's reputation downgrade
     has_positive_reputation: bool
@@ -153,6 +158,7 @@ def classify_candidate(boq_line: BoqLine, offer: VendorOfferDTO, *, as_of: datet
         currency=offer.currency,
         freshness=_freshness(offer, as_of),
         volume_status=_volume_status(boq_line, offer),
+        adverse_case=offer.adverse_case,
         executable_status=offer.executable_status,
         effective_executable_status=offer.effective_executable_status,
         has_positive_reputation=offer.has_positive_reputation,

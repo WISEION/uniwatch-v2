@@ -76,5 +76,23 @@ def test_summarize_boq_matches_excludes_non_matchable_line_types_from_percentage
     summary = summarize_boq_matches(boq_lines, matches)
 
     assert summary.non_matchable_line_count == 1
+    assert summary.non_matchable_amount == Decimal("9999")
     assert summary.total_priced_amount == Decimal("900")
     assert summary.green_pct == pytest.approx(66.666666, rel=1e-4)
+
+
+def test_summarize_boq_matches_does_not_invent_an_amount_for_an_unpriced_non_matchable_line():
+    # A non-matchable line can also lack a source-supplied amount -- that
+    # money is honestly absent, not zero, so it must not be summed into
+    # non_matchable_amount (same "don't invent a number" reasoning
+    # unpriced_line_count already applies to matchable lines).
+    boq_lines = [
+        _boq_line(1, "600", line_type="normal"),
+        _boq_line(2, None, line_type="preliminaries"),
+    ]
+    matches = {1: _match(1, "green")}
+
+    summary = summarize_boq_matches(boq_lines, matches)
+
+    assert summary.non_matchable_line_count == 1
+    assert summary.non_matchable_amount == Decimal("0")
