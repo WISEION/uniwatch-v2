@@ -28,7 +28,9 @@ def test_offer_holds_every_fr_vnd_05_field():
         evidence_source="synthetic-generator",
         observed_at="2026-08-06T00:00:00+00:00",
         adverse_case=None,
+        executable_status="confirmed",
     )
     assert offer.price == 850.0
     assert offer.currency == "AZN"
     assert offer.adverse_case is None
+    assert offer.executable_status == "confirmed"

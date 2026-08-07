@@ -45,6 +45,7 @@ def _offer(vendor_name: str, material: str) -> Offer:
         evidence_source="route-isolation-test",
         observed_at=AS_OF,
         adverse_case=None,
+        executable_status="confirmed",
     )
 
 

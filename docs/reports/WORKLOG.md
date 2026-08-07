@@ -872,4 +872,29 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 
 **Дальше:** task 3.D is now proven against real synthetic-generator data, not just hand-written fixtures — the gap the final review exists to catch. Next Phase 3 work is unchanged from the prior entry (task 3.C, or the deferred material/spec-matching + TCO financial weights once `D-VND-REP` resolves); additionally, the two parked gaps above (`non_matchable_amount`, adverse-case sub-type not preserved on `MatchCandidate`) are cheap follow-ups if picked up incidentally by later work, not a scheduled task on their own.
 
+## 2026-08-07 — Задание: Phase 3, задача 3.C (Executable Availability)
+
+**Сделано:**
+- `packages/vendor/availability_model.py` (new) — `EXECUTABLE_STATUS_TIERS` (`reserved` > `confirmed` > `reported` > `unknown`, strongest to weakest, `TENDER_INTELLIGENCE_SPEC.md` §6.3); `effective_executable_status()` implements the one reputation-weighting rule the spec states in words (a one-tier downgrade when the vendor carries a negative `ReputationFact`) — no numeric coefficient invented, `D-VND-REP` stays open for that.
+- `packages/vendor/vendor_model.py::Offer` gains `executable_status: str` (raw, vendor-declared/source-observed tier).
+- `packages/vendor/synthetic_provider.py` — each of the 8 fixture offers now carries an explicit, hand-assigned `executable_status`, chosen so all four tiers are represented at least twice across the set. `packages/vendor/csv_provider.py` hardcodes `"reported"` for every row (a CSV price list is, by definition, an unverified vendor submission — exactly what that tier means).
+- `migrations/0012_offer_executable_status.sql` — `vendor_offers.executable_status TEXT NOT NULL CHECK (...)`, same "no production data to break" reasoning as `migrations/0010_vendor_api_key.sql`. Schema ledger version bumped 11→12; every hardcoded `11` referring to the real current schema version across `packages/platform/settings.py` and 6 test files bumped to `12` (the deliberate mismatch value `99` left untouched).
+- `packages/vendor/vendor_store.py` — `store_offer` and both `list_offers_*` queries carry the new column.
+- `apps/api_vendor/routers/internal.py::GET /internal/offers` — now also computes and returns `effective_executable_status` per offer (reusing the per-vendor reputation cache already built for `has_positive_reputation`/`has_negative_reputation`), alongside the raw `executable_status` — never collapsed into one field. `packages/contracts/vendor_api.py::VendorOfferDTO` carries both through to callers.
+- Tests: new `tests/unit/test_availability_model.py` (tier ordering, downgrade-per-tier, `unknown` floor, invalid-status rejection, and the P314 acceptance assertion — same raw status, different effective status by reliability); `tests/integration/test_vendor_internal_offers.py` extended with the same P314 proof end-to-end through the real HTTP route (reliable vendor: `reserved` stays `reserved`; unreliable vendor: `reserved` → `confirmed`; no-reputation vendor: unchanged). Every existing `Offer(...)`/`VendorOfferDTO(...)`/raw-SQL-insert call site across the test suite updated for the new required field (caught two raw-SQL inserts — `test_vendor_tenant_isolation_db.py`, `test_vendor_sandbox_migration.py` — only by running the Full gate with Docker; a NOT NULL violation, not silently missed logic).
+- **Deliberately not built, recorded not silently skipped:** `packages/decision/matching.py` (task 3.D) is untouched — it still uses its own narrower `volume_status`+`freshness` executability proxy rather than the new `effective_executable_status`. Same precedent as task 3.B (reputation facts built standalone before 3.D consumed them later): protects 3.D's already-final-reviewed, closed logic from regression risk inside this task's diff. See `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-07.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network" --deselect tests/security/test_worldbank_live_fetch.py::test_live_fetch_against_real_worldbank_api
+354 passed, 33 skipped, 4 deselected in 207.23s (0:03:27)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+231 files already formatted / All checks passed! / Success: no issues found in 75 source files / PASS: v1 untouched
+```
+The one deselected test beyond the usual 3 `live_network`-marked ones, `tests/security/test_worldbank_live_fetch.py::test_live_fetch_against_real_worldbank_api`, is an unmarked live-network test that timed out hitting the real World Bank API — pre-existing, unrelated to this task (touches `packages/tender/worldbank_connector.py`, not `packages/vendor`/`packages/decision`), and not marked `live_network` despite hitting a real external host; recorded here for visibility, not fixed as part of this task's scope.
+
+**Дальше:** the raw `executable_status` fact and its reputation-weighted `effective_executable_status` are real, end-to-end, and proven at the HTTP contract boundary. Two explicit follow-ups (both recorded in OPEN-QUESTIONS, neither blocking): (a) whether/when to rewire task 3.D's traffic-light/TCO-ranking logic to consume `effective_executable_status` instead of its own proxy; (b) `D-VND-REP`'s numeric coefficient, still needed before a real TCO `risk_reserve(reputation)` term or a symmetric reputation-upgrade rule.
+
+**Блокеры:** нет новых. `D-VND-REP` remains non-blocking (see above).
+
 **Блокеры:** нет новых. Both parked re-review gaps are non-blocking (see `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-06).

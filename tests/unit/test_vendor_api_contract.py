@@ -107,6 +107,8 @@ async def test_list_vendor_offers_returns_parsed_items():
                 "evidence_source": "test",
                 "observed_at": "2026-08-06T00:00:00+00:00",
                 "adverse_case": None,
+                "executable_status": "reserved",
+                "effective_executable_status": "reserved",
                 "has_positive_reputation": True,
                 "has_negative_reputation": False,
             }

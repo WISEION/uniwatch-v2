@@ -39,9 +39,9 @@ async def test_raw_sql_scoped_by_vendor_id_never_returns_another_vendors_offers(
                     "INSERT INTO vendor_offers "
                     "(vendor_id, data_realm, watermark, material, price, currency, vat_rate, uom, "
                     " uom_canonical_qty, moq, capacity, inventory, valid_from, valid_until, "
-                    " evidence_source, observed_at) "
+                    " evidence_source, observed_at, executable_status) "
                     "VALUES (:vendor_id, 'vendor-sandbox', 'SYNTHETIC', 'rebar-16mm', 870.5, 'AZN', 18.0, 'ton', "
-                    " 1.0, 5.0, 150.0, 90.0, now(), now(), 'db-isolation-test', now())"
+                    " 1.0, 5.0, 150.0, 90.0, now(), now(), 'db-isolation-test', now(), 'confirmed')"
                 ),
                 {"vendor_id": vendor_id},
             )

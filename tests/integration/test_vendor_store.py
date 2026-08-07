@@ -110,6 +110,7 @@ async def test_list_offers_with_vendor_name_by_data_realm_includes_vendor_name(e
         evidence_source="test",
         observed_at="2026-08-06T00:00:00+00:00",
         adverse_case=None,
+        executable_status="confirmed",
     )
 
     async with engine.begin() as conn:
@@ -121,3 +122,4 @@ async def test_list_offers_with_vendor_name_by_data_realm_includes_vendor_name(e
     assert len(matching) == 1
     assert matching[0]["vendor_name"] == "Joined Vendor"
     assert matching[0]["material"] == "rebar A400"
+    assert matching[0]["executable_status"] == "confirmed"

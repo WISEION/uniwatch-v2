@@ -6,7 +6,14 @@ provider-adapter abstraction supports a genuinely different input shape
 real vendor's actual data. Still data_realm="vendor-sandbox"/
 watermark="SYNTHETIC": the real vendor onboarding legal/privacy/security
 gate hasn't opened (ADR-0004), so every provider's output stays
-sandbox-realm regardless of input shape until that gate does."""
+sandbox-realm regardless of input shape until that gate does.
+
+`executable_status` (task 3.C, TENDER_INTELLIGENCE_SPEC.md §6.3) is
+hardcoded to "reported" for every row -- same discipline as `adverse_case`
+being hardcoded `None` below: a CSV price list is, by definition, a
+vendor's own unverified submission (no legal lock, no independent physical
+confirmation), which is exactly what the "reported" tier means. There is
+no CSV column that could honestly supply "reserved"/"confirmed" instead."""
 
 from __future__ import annotations
 
@@ -80,6 +87,7 @@ class CsvProvider:
                         evidence_source="csv-upload",
                         observed_at=as_of,
                         adverse_case=None,
+                        executable_status="reported",
                     )
                 )
             except ValueError as exc:

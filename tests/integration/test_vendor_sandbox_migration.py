@@ -50,9 +50,9 @@ async def test_vendor_offers_table_rejects_realm_watermark_mismatch(engine):
                     "INSERT INTO vendor_offers "
                     "(vendor_id, data_realm, watermark, material, price, currency, vat_rate, uom, "
                     " uom_canonical_qty, moq, capacity, inventory, valid_from, valid_until, "
-                    " evidence_source, observed_at) "
+                    " evidence_source, observed_at, executable_status) "
                     "VALUES (:vendor_id, 'vendor-sandbox', 'REAL', 'rebar', 850.0, 'AZN', 18.0, 'ton', "
-                    " 1.0, 5.0, 100.0, 80.0, now(), now(), 'test', now())"
+                    " 1.0, 5.0, 100.0, 80.0, now(), now(), 'test', now(), 'confirmed')"
                 ),
                 {"vendor_id": vendor_id},
             )

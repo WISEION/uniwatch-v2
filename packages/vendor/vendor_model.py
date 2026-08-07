@@ -44,3 +44,8 @@ class Offer:
     evidence_source: str
     observed_at: str
     adverse_case: str | None
+    # Raw, vendor-declared/source-observed tier (TENDER_INTELLIGENCE_SPEC.md
+    # §6.3, task 3.C): "reserved" | "confirmed" | "reported" | "unknown" --
+    # see packages/vendor/availability_model.py for the tier ordering and
+    # the reputation-weighted effective status derived from it.
+    executable_status: str

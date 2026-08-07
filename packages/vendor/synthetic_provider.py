@@ -17,8 +17,14 @@ Covers all 7 of FR-VND-03's named adverse cases (`stale_offer`,
 `expiring_evidence`, `partial_fulfillment`). Each is *represented* here --
 FR-VND-03's other half ("...и обрабатывается решением явно", handled by
 an explicit decision) is not: nothing downstream yet reacts to an
-adverse_case label, that is task 3.C/3.D matching/availability logic, not
-this generator (recorded in docs/decisions/OPEN-QUESTIONS.md)."""
+adverse_case label, that is task 3.D matching logic, not this generator
+(recorded in docs/decisions/OPEN-QUESTIONS.md).
+
+Each of the 8 offers also carries an explicit `executable_status`
+(task 3.C, TENDER_INTELLIGENCE_SPEC.md §6.3) -- hand-assigned per offer
+rather than drawn from `rng`, same discipline as every other fixture value
+here, and chosen so all four tiers (`reserved`/`confirmed`/`reported`/
+`unknown`) are represented at least twice across the fixture set."""
 
 from __future__ import annotations
 
@@ -71,6 +77,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=as_of,
                 adverse_case=None,
+                executable_status="confirmed",
             )
         )
 
@@ -95,6 +102,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=as_of,
                 adverse_case="stale_offer",
+                executable_status="reported",
             )
         )
 
@@ -119,6 +127,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=as_of,
                 adverse_case="moq_conflict",
+                executable_status="reserved",
             )
         )
 
@@ -145,6 +154,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=as_of,
                 adverse_case="mixed_uom",
+                executable_status="unknown",
             )
         )
 
@@ -171,6 +181,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=as_of,
                 adverse_case="currency_vat_mismatch",
+                executable_status="confirmed",
             )
         )
 
@@ -198,6 +209,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=as_of,
                 adverse_case="capacity_shortfall",
+                executable_status="reported",
             )
         )
 
@@ -225,6 +237,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=(as_of_dt - timedelta(days=25)).isoformat(),
                 adverse_case="expiring_evidence",
+                executable_status="reserved",
             )
         )
 
@@ -252,6 +265,7 @@ class SyntheticProvider:
                 evidence_source="synthetic-generator",
                 observed_at=as_of,
                 adverse_case="partial_fulfillment",
+                executable_status="unknown",
             )
         )
 
