@@ -49,10 +49,10 @@ async def store_offer(conn: AsyncConnection, vendor_id: int, offer: Offer) -> in
                 INSERT INTO vendor_offers
                     (vendor_id, data_realm, watermark, material, price, currency, vat_rate, uom,
                      uom_canonical_qty, moq, capacity, inventory, valid_from, valid_until,
-                     evidence_source, observed_at, adverse_case)
+                     evidence_source, observed_at, adverse_case, executable_status)
                 VALUES (:vendor_id, :data_realm, :watermark, :material, :price, :currency, :vat_rate, :uom,
                         :uom_canonical_qty, :moq, :capacity, :inventory, :valid_from, :valid_until,
-                        :evidence_source, :observed_at, :adverse_case)
+                        :evidence_source, :observed_at, :adverse_case, :executable_status)
                 RETURNING id
                 """
             ),
@@ -79,6 +79,7 @@ async def store_offer(conn: AsyncConnection, vendor_id: int, offer: Offer) -> in
                 "evidence_source": offer.evidence_source,
                 "observed_at": datetime.fromisoformat(offer.observed_at),
                 "adverse_case": offer.adverse_case,
+                "executable_status": offer.executable_status,
             },
         )
     ).scalar_one()
@@ -92,7 +93,7 @@ async def list_offers_by_data_realm(conn: AsyncConnection, *, data_realm: str) -
                     """
                     SELECT id, vendor_id, data_realm, watermark, material, price, currency, vat_rate,
                            uom, uom_canonical_qty, moq, capacity, inventory, valid_from, valid_until,
-                           evidence_source, observed_at, adverse_case
+                           evidence_source, observed_at, adverse_case, executable_status
                     FROM vendor_offers WHERE data_realm = :data_realm ORDER BY id
                     """
                 ),
@@ -118,7 +119,7 @@ async def list_offers_by_vendor(conn: AsyncConnection, *, vendor_id: int) -> lis
                     """
                     SELECT id, vendor_id, data_realm, watermark, material, price, currency, vat_rate,
                            uom, uom_canonical_qty, moq, capacity, inventory, valid_from, valid_until,
-                           evidence_source, observed_at, adverse_case
+                           evidence_source, observed_at, adverse_case, executable_status
                     FROM vendor_offers WHERE vendor_id = :vendor_id ORDER BY id
                     """
                 ),
@@ -142,7 +143,8 @@ async def list_offers_with_vendor_name_by_data_realm(conn: AsyncConnection, *, d
                     """
                     SELECT o.id, o.vendor_id, v.name AS vendor_name, o.data_realm, o.watermark, o.material,
                            o.price, o.currency, o.vat_rate, o.uom, o.uom_canonical_qty, o.moq, o.capacity,
-                           o.inventory, o.valid_from, o.valid_until, o.evidence_source, o.observed_at, o.adverse_case
+                           o.inventory, o.valid_from, o.valid_until, o.evidence_source, o.observed_at, o.adverse_case,
+                           o.executable_status
                     FROM vendor_offers o
                     JOIN vendors v ON v.id = o.vendor_id
                     WHERE o.data_realm = :data_realm

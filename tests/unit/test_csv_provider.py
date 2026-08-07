@@ -50,6 +50,9 @@ def test_evidence_source_and_observed_at_are_set_from_as_of():
     assert all(o.evidence_source == "csv-upload" for o in offers)
     assert all(o.observed_at == AS_OF for o in offers)
     assert all(o.adverse_case is None for o in offers)
+    # A CSV price list is a vendor's own unverified submission -- exactly
+    # what the "reported" tier means (TENDER_INTELLIGENCE_SPEC.md §6.3).
+    assert all(o.executable_status == "reported" for o in offers)
 
 
 def test_empty_csv_content_produces_no_records():

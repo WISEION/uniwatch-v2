@@ -72,6 +72,8 @@ def _offer(
         evidence_source="test",
         observed_at="2026-08-01T00:00:00+00:00",
         adverse_case=None,
+        executable_status="confirmed",
+        effective_executable_status="confirmed",
         has_positive_reputation=has_positive_reputation,
         has_negative_reputation=has_negative_reputation,
     )

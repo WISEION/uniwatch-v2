@@ -7,10 +7,16 @@ works end to end, without inventing real vendor business data
 `GET /internal/offers` (task 3.D prep, TENDER_INTELLIGENCE_SPEC.md §6.4) is
 the one endpoint packages/decision's cross-domain matching logic consumes
 through packages/contracts/vendor_api.py -- it never reads packages/vendor's
-tables directly. Reputation flags are computed here, not by the caller,
-because this service already has authoritative access to both
-vendor_offers and vendor_reputation_facts; a per-vendor round trip from the
-caller would be pure ceremony for no isolation benefit within one service.
+tables directly. Reputation flags -- and, as of task 3.C, the reputation-weighted
+`effective_executable_status` (TENDER_INTELLIGENCE_SPEC.md §6.3, P314) --
+are computed here, not by the caller, because this service already has
+authoritative access to both vendor_offers and vendor_reputation_facts; a
+per-vendor round trip from the caller would be pure ceremony for no
+isolation benefit within one service. The response carries both the raw
+`executable_status` (the vendor's own declared/observed tier) and the
+computed `effective_executable_status`, never collapsing the two into one
+field -- a caller that only wants the raw fact should never be forced to
+also swallow the reputation weighting, and vice versa.
 
 Deliberately UNAUTHENTICATED, same gap as /internal/ping: real
 service-to-service auth is deferred by ADR-0006 to the still-open
@@ -31,6 +37,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from packages.vendor.availability_model import effective_executable_status
 from packages.vendor.reputation_model import NEGATIVE_EVENT_TYPES, POSITIVE_EVENT_TYPES
 from packages.vendor.reputation_store import list_active_reputation_facts
 from packages.vendor.vendor_store import list_offers_with_vendor_name_by_data_realm
@@ -70,6 +77,8 @@ class InternalOfferResponse(BaseModel):
     evidence_source: str
     observed_at: datetime
     adverse_case: str | None
+    executable_status: str
+    effective_executable_status: str
     has_positive_reputation: bool
     has_negative_reputation: bool
 
@@ -100,6 +109,9 @@ async def list_internal_offers(
         items.append(
             InternalOfferResponse(
                 **row,
+                effective_executable_status=effective_executable_status(
+                    row["executable_status"], has_negative_reputation=has_negative
+                ),
                 has_positive_reputation=has_positive,
                 has_negative_reputation=has_negative,
             )

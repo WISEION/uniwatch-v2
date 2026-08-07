@@ -1,7 +1,15 @@
-"""Integration test for GET /internal/offers (task 3.D prep): the Vendor
-service's service-to-service endpoint that packages/decision's matching
-logic (via packages/contracts) will consume. Deliberately unauthenticated,
-same documented gap as GET /internal/ping (docs/decisions/OPEN-QUESTIONS.md)."""
+"""Integration test for GET /internal/offers (task 3.D prep, extended by
+task 3.C for Executable Availability): the Vendor service's
+service-to-service endpoint that packages/decision's matching logic (via
+packages/contracts) will consume. Deliberately unauthenticated, same
+documented gap as GET /internal/ping (docs/decisions/OPEN-QUESTIONS.md).
+
+The P314 assertions below (TENDER_INTELLIGENCE_SPEC.md §6.3) are this
+task's acceptance criterion: the same raw `executable_status` ("reserved")
+must resolve to a different `effective_executable_status` depending on
+whether the vendor carries a negative `ReputationFact` -- proving the
+words genuinely mean less when said by an unreliable vendor, not just that
+a boolean flag exists somewhere."""
 
 from __future__ import annotations
 
@@ -16,7 +24,7 @@ from packages.vendor.vendor_store import store_offer, store_vendor
 
 
 async def test_internal_offers_reports_positive_reputation_flag(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=11)
+    settings = Settings(database_url=_database_url, expected_schema_version=12)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
@@ -43,6 +51,7 @@ async def test_internal_offers_reports_positive_reputation_flag(engine, _databas
             evidence_source="test",
             observed_at="2026-08-06T00:00:00+00:00",
             adverse_case=None,
+            executable_status="reserved",
         )
         await store_offer(conn, vendor_id, offer)
         fact = ReputationFact(
@@ -71,10 +80,14 @@ async def test_internal_offers_reports_positive_reputation_flag(engine, _databas
     assert matching[0]["vendor_name"] == "Reliable Vendor"
     assert matching[0]["has_positive_reputation"] is True
     assert matching[0]["has_negative_reputation"] is False
+    # P314: positive reputation does not upgrade the raw status (no source
+    # document states such a rule) -- effective stays equal to raw.
+    assert matching[0]["executable_status"] == "reserved"
+    assert matching[0]["effective_executable_status"] == "reserved"
 
 
 async def test_internal_offers_reports_no_reputation_flags_when_no_facts_exist(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=11)
+    settings = Settings(database_url=_database_url, expected_schema_version=12)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
@@ -101,6 +114,7 @@ async def test_internal_offers_reports_no_reputation_flags_when_no_facts_exist(e
             evidence_source="test",
             observed_at="2026-08-06T00:00:00+00:00",
             adverse_case=None,
+            executable_status="reserved",
         )
         await store_offer(conn, vendor_id, offer)
 
@@ -115,10 +129,15 @@ async def test_internal_offers_reports_no_reputation_flags_when_no_facts_exist(e
     matching = [i for i in items if i["vendor_id"] == vendor_id]
     assert matching[0]["has_positive_reputation"] is False
     assert matching[0]["has_negative_reputation"] is False
+    # No negative reputation on record -- effective status trusts the raw
+    # claim as-is, same as the "no reputation" vendor never being treated
+    # as if it were actively unreliable.
+    assert matching[0]["executable_status"] == "reserved"
+    assert matching[0]["effective_executable_status"] == "reserved"
 
 
 async def test_internal_offers_reports_negative_reputation_flag(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=11)
+    settings = Settings(database_url=_database_url, expected_schema_version=12)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
@@ -145,6 +164,7 @@ async def test_internal_offers_reports_negative_reputation_flag(engine, _databas
             evidence_source="test",
             observed_at="2026-08-06T00:00:00+00:00",
             adverse_case=None,
+            executable_status="reserved",
         )
         await store_offer(conn, vendor_id, offer)
         fact = ReputationFact(
@@ -170,3 +190,9 @@ async def test_internal_offers_reports_negative_reputation_flag(engine, _databas
     matching = [i for i in items if i["vendor_id"] == vendor_id]
     assert matching[0]["has_negative_reputation"] is True
     assert matching[0]["has_positive_reputation"] is False
+    # P314: "the same words" ("reserved") from an unreliable vendor land at
+    # a different, weaker effective status than from a reliable vendor --
+    # TENDER_INTELLIGENCE_SPEC.md §6.3's own stated example ("Reserved у
+    # ненадёжного ≈ Confirmed у надёжного"): one-tier downgrade.
+    assert matching[0]["executable_status"] == "reserved"
+    assert matching[0]["effective_executable_status"] == "confirmed"

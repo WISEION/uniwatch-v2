@@ -108,3 +108,11 @@ def test_generates_exactly_one_normal_and_seven_distinct_adverse_offers():
         "expiring_evidence",
         "partial_fulfillment",
     }
+
+
+def test_all_four_executable_status_tiers_are_represented():
+    # P314 (TENDER_INTELLIGENCE_SPEC.md §6.3): the fixture set must exercise
+    # every tier, not just default to one value everywhere.
+    _vendors, offers = SyntheticProvider(seed=1).generate(as_of=AS_OF)
+    statuses = {o.executable_status for o in offers}
+    assert statuses == {"reserved", "confirmed", "reported", "unknown"}

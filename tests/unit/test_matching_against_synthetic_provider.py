@@ -42,6 +42,8 @@ def _offer_to_dto(offer, *, offer_id: int, vendor_id: int) -> VendorOfferDTO:
         evidence_source=offer.evidence_source,
         observed_at=offer.observed_at,
         adverse_case=offer.adverse_case,
+        executable_status=offer.executable_status,
+        effective_executable_status=offer.executable_status,
         has_positive_reputation=False,
         has_negative_reputation=False,
     )

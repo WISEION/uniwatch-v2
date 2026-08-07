@@ -86,6 +86,8 @@ class VendorOfferDTO(BaseModel):
     evidence_source: str
     observed_at: datetime
     adverse_case: str | None
+    executable_status: str
+    effective_executable_status: str
     has_positive_reputation: bool
     has_negative_reputation: bool
 
