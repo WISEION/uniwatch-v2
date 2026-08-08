@@ -754,3 +754,38 @@ Neither change touches `_traffic_light`/`rank_executable_candidates_by_tco`'s de
 **Owner follow-up needed:** Yes, non-blocking. When ready: (a) try PaddleOCR-VL 1.6 via the maintainer's confirmed manual-GGUF recipe against this project's `OllamaOcrEngine` (should work unmodified — it's a generic Ollama `/api/generate` client); (b) if it fails to load on the target machine, fall back to `qwen2.5vl:7b` (official tag, higher integration confidence, more resource-hungry); (c) pick an ASR path (`faster-whisper` + `whisper-az` LoRA is the leading candidate) when voice-note ingestion is prioritized.
 
 **Owner follow-up needed:** No — this closes the recorded follow-up. `D-VND-REP`'s numeric coefficient (follow-up (b) above) remains the only open item from task 3.C.
+
+## 2026-08-08 — Task 4.A Decision Core scope
+
+**Context:** Task 4.A (`TENDER_INTELLIGENCE_SPEC.md` §7.1, Decision Core: Go/No-Go → Bid), first task of Phase 4, started on owner GO per the Exit gate Phase 3 record above.
+
+**Deviation/assumption:** Per an explicit owner decision recorded in this session's conversation (not previously in any document): Go/No-Go's qualitative inputs — company profile, qualification, financing, customer reputation, pre-designated-winner suspicion — are captured as **human-entered free text**, not computed. No source document supplies a scoring/weighting formula for any of these, and customer reputation specifically depends on Phase 4.C's Execution Ledger, which does not exist yet. This task only gives the human's own assessment a durable, queryable home (`go_no_go_inputs` table) — it does not attempt to derive or validate a Go/No-Go verdict from that text.
+
+Six further gaps recorded, not silently approximated:
+1. **Margin, risk concentration, own-resource-loading** (§7.1's other Bid/No-Bid criteria) are not computed — no source document supplies the company's own cost basis or resource schedule any of these need.
+2. **P316's "three probabilities"** are not produced — no calibrated probability source exists; DFE's own `forecast_card.py` already defers this same gap (P311).
+3. **INV-20's lock-in is only the identification half** — `lock_in_requirements` flags which BOQ lines need a lock-in and for which vendor, but does not generate an actual LOI/pre-order legal document.
+4. **INV-06's No-Go override maker/checker flow** is not built — `no_go` exists as one of five `Decision` types, but a distinct, audited *override* flow for reversing an active No-Go is separate, future scope.
+5. **`GET /bid-readiness-candidate` hardcodes `data_realm="vendor-sandbox"`** — the only realm with any data today (ADR-0004). Revisit once `vendor-production` data exists.
+6. **Several smaller gaps found during review, all recorded rather than silently fixed or dropped:**
+   - `write_audit_log` calls on both mutating routes have no way to capture the actor's `role` alongside `actor` — `packages/platform/audit.py`'s `audit_log` table has no role column; adding one is a platform-wide schema change out of scope for this task, even though ADR-0003 layer 4 names "actor, role, reason, input snapshot" as the ideal.
+   - `GET /bid-readiness-candidate` has a write side effect (it stores a new `bid_readiness_candidates` row on every call, including a page refresh) — matches this task's design (each computation is its own point-in-time record) but means unbounded row growth under repeated polling; no retention/pruning policy exists yet.
+   - A `Decision` of type `bid`/`conditional_bid` with no `bid_readiness_candidate_id` silently skips lock-in generation — the response's empty `lock_in_requirements: []` is indistinguishable from "analysed, none needed since no line is single-vendor-critical."
+   - `GET /bid-readiness-candidate`'s two 404 cases ("tender not found/no version" vs. "tender has a version but zero BOQ lines") both return the same error code `not_found`, distinguishable only by message text.
+   - `create_decision`'s `IntegrityError`-to-422 path (a bad `go_no_go_inputs_id`/`bid_readiness_candidate_id`/`tender_id` on `POST /decisions`) has no direct test — Task 5's fix round restored regression coverage for the equivalent path on `POST /go-no-go-inputs` and for the naive-`as_of` case, but not this one. Same code shape, already exercised manually during review; low risk, but recorded rather than silently assumed covered. **Superseded 2026-08-09**: the Final Review's finding C2 (below) replaced the `go_no_go_inputs_id`/`bid_readiness_candidate_id` halves of this gap with explicit, directly-tested upfront validation; only a bad `tender_id` itself still reaches `IntegrityError`, and remains untested by a dedicated case (still low risk, same reasoning).
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** Yes, non-blocking. Items 1-2 need either real historical cost/resource data or an owner research/approval gate before they can be computed without inventing a number — same discipline as `D-VND-REP`. Items 3-4 are scoped, schedulable follow-up tasks, not open research questions. Item 5 resolves automatically once real vendor onboarding (Phase 7) exists. Item 6's five sub-items are all cheap follow-ups if picked up incidentally by later work, not scheduled tasks on their own.
+
+## 2026-08-09 — Task 4.A Final Review findings C1/C2 fixed; one new deferred item (BOQ computation load)
+
+**Context:** the whole-branch Final Review for Task 4.A found two Critical, merge-blocking bugs — see `docs/reports/WORKLOG.md`'s 2026-08-09 entry for the full technical detail. Both are fixed (commit `04678f2`), confirmed by a scoped re-review, and covered by new regression tests. Recorded here because they change facts stated in the entry above:
+
+1. **C1 (fixed):** `list_boq_lines_by_tender_version()` never worked against real eTender ingestion, because `event_details` and each `bom_lines_page` land under structurally different `tenders` identities (see `packages/tender/etender_contract.py`). Replaced by `get_event_id_for_tender()` + `list_boq_lines_by_event()`, which resolve/query the real `(source, event_id)` aggregate key `boq_lines` already exposes.
+2. **C2 (fixed):** `POST /decisions` now rejects a `go_no_go_inputs_id`/`bid_readiness_candidate_id` that does not belong to the URL's `tender_id`, before writing anything to the append-only `decisions` table.
+3. **New deferred item, found during C1's fix and its re-review:** `GET /bid-readiness-candidate` now does what it was always designed to do — compute against a tender's FULL BOQ (potentially thousands of lines across dozens of pages) synchronously inside an `apps/api_tender` request handler. This risk was previously masked by C1's bug (the query almost always returned zero or one page's worth of lines). Whether this belongs in `apps/worker` instead (per `CLAUDE.md`'s "apps/api_tender ... request/response only" framing) is a genuine architecture question, not something this bug-fix should decide unilaterally.
+
+**Source conflict (if any):** None.
+
+**Owner follow-up needed:** Yes, non-blocking for this merge. Item 3 needs an owner/architecture call on whether `GET /bid-readiness-candidate` should move its computation to `apps/worker` (async job + polling) before real, multi-thousand-line tenders reach it in production — synthetic/sandbox data today makes this low-urgency.

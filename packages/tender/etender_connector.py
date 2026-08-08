@@ -42,7 +42,12 @@ from .schema_drift import SchemaDriftDetected, detect_schema_drift, detect_schem
 from .signals_store import store_signal
 from .source_contract import SourceContract, canonical_identity
 
-PARSER_VERSION = "etender-v1"
+PARSER_VERSION = "etender-v2"
+# v2 (Task 4.A Final Review, finding C1 fix): ingest_event_details's
+# normalized_fields gained "id" -- the layer-2 output shape changed,
+# so ADR-0003's parser_version discipline requires a bump even though
+# ingest_bom_lines_page/ingest_events_list_page, which share this constant,
+# did not change shape themselves.
 
 
 async def _ingest(
@@ -113,6 +118,17 @@ async def ingest_event_details(
 ) -> TenderVersion:
     def normalize_fields(p: dict[str, Any]) -> dict[str, Any]:
         return {
+            # The numeric eTender event id -- this is what BOM-lines page
+            # ingestion keys boq_lines by (event_id, see ingest_bom_lines_page
+            # below and boq_lines_event_idx). A real tender's event_details
+            # and its BOM-lines pages are ingested under structurally
+            # different identity_query_keys (this contract keys on "id"
+            # alone; BOM_LINES_PAGE_CONTRACT keys on event_id + PageNumber),
+            # so they resolve to distinct `tenders` rows. Storing the id
+            # here is the only bridge back from an event_details-sourced
+            # tender to the real (source, event_id) BOQ aggregate key
+            # (packages/tender/normalized.py's get_event_id_for_tender).
+            "id": p["id"],
             "tender_name": p["tenderName"],
             "organization_name": p["organizationName"],
             "organization_voen": p.get("organizationVoen"),

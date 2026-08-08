@@ -1002,3 +1002,70 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** 5 из 6 открытых пунктов из сводного exit-gate задания закрыты реальным, протестированным кодом в этом задании. Единственный оставшийся открытый пункт Phase 3 — `D-VND-REP` (и его TCO-смежные пробелы) — не может быть закрыт без исследовательского/утверждающего решения владельца по формуле; это осознанно не блокирует GO, тем же способом, каким это уже было принято раньше (2026-08-06/07 записи). Owner follow-ups (подтвердить реальный Ollama tag, предоставить реальное фото, выбрать ASR tech, решить `D-VND-REP`) перечислены в `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-08. Вердикт GO/NO-GO по Exit gate Phase 3 остаётся за владельцем (`AGENTS.md` §4); если GO — следующий шаг `TENDER_INTELLIGENCE_SPEC.md` §7 задача 4.A (Decision Core).
 
 **Блокеры:** нет новых. `D-VND-REP` остаётся некритичным для GO, как и раньше.
+
+## 2026-08-08 — GO по Exit gate Phase 3, старт Phase 4
+
+**Контекст:** владелец явно подтвердил GO по Exit gate Phase 3 (сводка выше и в записи "Exit gate Phase 3: сводные доказательства") в чате, в ответ на прямой вопрос об этом (`AGENTS.md` §4: "Phase N+1 не начинается без GO по Phase N"). Открытые пункты (`D-VND-REP` и TCO-смежные) переносятся в Phase 4 как есть, не блокируют.
+
+**Решение:** Phase 4 (`TENDER_INTELLIGENCE_SPEC.md` §7 — Execution Ledger + Decision Core + Calibration) стартует с задачи 4.A (Decision Core, Go/No-Go → Bid).
+
+**Дальше:** изучить точный объём 4.A, свериться с текущим состоянием `packages/decision`/`packages/algorithm`, составить план задачи перед началом кода.
+
+**Блокеры:** нет.
+
+## 2026-08-08 — Задание: Phase 4, задача 4.A (Decision Core), реализация (subagent-driven, 5 подзадач + 3 раунда правок по ревью)
+
+**Сделано:**
+- `packages/decision/matching.py::is_strong_source` — публичный (был `_is_strong_source`); `packages/tender/boq_lines_store.py::list_boq_lines_by_tender_version()` + `packages/tender/normalized.py::get_current_tender_version_id()` — первый реальный путь от `tenders.id` к персистентным `BoqLine`.
+- `packages/decision/decision_model.py` — `GoNoGoInputs` (владелец явно решил в чате: квалификация/финансирование/репутация заказчика/подозрение на «нарисованный» тендер вводятся человеком как свободный текст, ничего не вычисляется — обоснование в OPEN-QUESTIONS), `Decision` (append-only, пять типов, `__post_init__` бросает на неизвестном), `LockInRequirement`.
+- `packages/decision/bid_readiness.py::build_bid_readiness_candidate()` — единственный реально вычисляемый Bid/No-Bid сигнал: покрытие BOQ деньгами против порога `~85%` из самой спецификации, и строки, зависящие от единственного «сильного» (`is_strong_source`) вендора.
+- Migration `0014_decision_core.sql` (schema version 13→14) + `packages/decision/decision_store.py` — персистентность, `decisions` без единого UPDATE/DELETE.
+- `apps/api_tender/routers/decision.py` — три маршрута под `/tenders/{tender_id}`. `GET /bid-readiness-candidate` — первое место в кодовой базе, где `match_boq_line`/`summarize_boq_matches` реально вызываются против персистентных BOQ-строк тендера и настоящего постраничного запроса к Vendor-сервису (задача 3.D's финальный ревью зафиксировал этот разрыв как реальный, но отложенный — здесь закрыт). `POST /decisions` на `bid`/`conditional_bid` автоматически создаёт `LockInRequirement` по каждой критической строке (INV-20's половина «идентификации»).
+- Полное поведенческое тестовое покрытие (`tests/integration/test_decision_api.py`): RBAC deny-by-default (401 и 403), idempotency-replay с проверкой отсутствия дубликата в БД, живой запрос к реальному Vendor-сервису (два сильных вендора → green, один вендор → critical line), генерация lock-in с прямой проверкой строки в БД, аудит-лог обеих мутаций.
+- **Три раунда правок по ревью, все реальные найденные баги:**
+  1. Задача 3: неиспользуемый импорт в тесте ломал `ruff check` (упало бы CI).
+  2. Задача 4: наивный `as_of` падал с 500 вместо чистого 422 (воспроизведено эмпирически); плохой FK-referenced id на обоих POST падал с 500 вместо 422 `invalid_reference`; ни одна мутация не писала audit-лог, хотя `admin_users.py` — единственный прецедент в кодовой базе — делает это на каждой. Все три исправлены и подтверждены реальным запуском (не только чтением diff).
+  3. Задача 5: удаление устаревшего smoke-check файла случайно уничтожило единственное покрытие двух из трёх багов задачи 4 (найдено финальным ревью задачи 5, восстановлено); тест «no lock-ins on non-bid decision» проходил по неверной причине (не было привязанного candidate, а не потому что тип решения — no_go; исправлено на реальный candidate с критической строкой); тест генерации lock-in не проверял БД напрямую; отсутствовала проверка audit-лога; idempotency заявлялась в докстринге, но не тестировалась; RBAC 403 (аутентифицирован, но без прав) не тестировался вообще. Все шесть исправлений подтверждены мутационным тестированием ревьюером (намеренно ломал код, убеждался что тест это ловит).
+- **Осознанно не построено, зафиксировано, не замолчано (`docs/decisions/OPEN-QUESTIONS.md`, 2026-08-08):** маржа/концентрация риска/загрузка ресурсов, P316's «три вероятности», настоящая генерация LOI-документа, INV-06's maker/checker поток отмены No-Go, хардкод `data_realm="vendor-sandbox"`, отсутствие `role` в audit-логе, побочный эффект записи на каждый GET bid-readiness-candidate, невидимость пропуска lock-in при отсутствии candidate_id, общий код `not_found` на двух разных 404, отсутствие прямого теста на `IntegrityError`→422 у `POST /decisions` (тот же паттерн уже проверен на другом маршруте).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network" --deselect tests/security/test_worldbank_live_fetch.py::test_live_fetch_against_real_worldbank_api
+428 passed, 33 skipped, 4 deselected in 293.32s (0:04:53)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps
+251 files already formatted / All checks passed! / Success: no issues found in 84 source files
+```
+`check_v1_untouched.py` продолжает флагировать только гитигнорируемые скретч-отчёты этого плана (`.superpowers/sdd/.../task-{2,4,5}-report.md`), содержащие цитату предупреждения самого чекера — тот же известный, неблокирующий паттерн, что и во всех предыдущих заданиях этой сессии. Ни один реально закоммиченный файл не содержит литерала v1-пути.
+
+**Дальше:** Decision Core проверен end-to-end (живой BOQ↔vendor запрос → candidate → человеческое решение → lock-in флагирование). Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7: задача 4.B (post-submission tracking) или 4.C (Execution Ledger — заодно закроет отложенный пробел с репутацией заказчика).
+
+**Блокеры:** нет новых. Все перечисленные пробелы — некритичные, та же дисциплина, что и во всех предыдущих фазах.
+
+## 2026-08-09 — Задание 4.A: финальный ревью всей ветки нашёл 2 Critical, исправлены
+
+**Контекст:** финальный ревью всей ветки `worktree-phase4-task4a-decision-core` (широкий обзор поверх шести per-task ревью выше) нашёл 2 блокирующих Critical бага, которые ни одно из шести per-task ревью не поймало — оба про интеграцию между задачами, а не про одну задачу саму по себе.
+
+**Найдено:**
+- **C1**: `list_boq_lines_by_tender_version()` не работал против реально проглоченных данных eTender. `EVENT_DETAILS_CONTRACT.identity_query_keys = ("id",)`, а `BOM_LINES_PAGE_CONTRACT.identity_query_keys = ("event_id", "PageNumber")` (`packages/tender/etender_contract.py`) — это структурно разные identity-ключи, поэтому `event_details` тендера и КАЖДАЯ его BOQ-страница попадают в РАЗНЫЕ строки `tenders` с разными `tender_version_id`. Ни один `tender_version_id` не хранит весь BOQ тендера целиком — запрос по нему был обречён возвращать пусто против реального пайплайна.
+- **C2**: `POST /decisions` не проверял, что переданные `go_no_go_inputs_id`/`bid_readiness_candidate_id` принадлежат тендеру из URL — позволяя одному тендеру навсегда унести в append-only `decisions` чужие входные данные/critical lines.
+
+**Исправлено (коммит `04678f2`):**
+- C1: `ingest_event_details` теперь сохраняет `"id"` (реальный numeric event id, отличный от `eventId` в том же payload — проверено против реального fixture `event_355920_details.raw.json`, где `id=355920`, `eventId=120635`, а `MANIFEST.md` подтверждает, что именно `id` используется в URL BOQ-ресурса) в `normalized_fields` (`PARSER_VERSION` поднят `v1`→`v2` по ADR-0003). Новая `packages/tender/normalized.py::get_event_id_for_tender()` резолвит этот `id` из `normalized_fields`. `list_boq_lines_by_tender_version()` заменена на `list_boq_lines_by_event(source, event_id)`, читающую реальный агрегатный ключ `boq_lines` — `(source, event_id)` (`boq_lines_event_idx`), независимо от того, под каким `tender_version_id` каждая страница когда-то легла.
+- C2: новая проверка в `create_decision` ДО `store_decision` — если `go_no_go_inputs_id`/`bid_readiness_candidate_id` заданы, их `tender_id` должен совпадать с URL. Не совпадает → 422 `invalid_reference`, ничего не пишется (одна транзакция на запрос).
+- Добавлены реалистичные регрессионные тесты: fixture с ДВУМЯ настоящими разными `tenders`-строками, делящими один `event_id` (воспроизводит реальный сплит); две проверки C2 на чужой тендер; проверки на несуществующий (не только чужой) id; проверка, что `bid`-решение без `candidate_id` по-прежнему не падает.
+- Один scoped re-review (не второй fix wave) подтвердил C1 и C2 FIXED, регрессий не нашёл; дополнительно поймал недискриминирующую сортировку в одном новом тесте (испр.), неточный текст сообщения `IntegrityError`→422 (испр., теперь называет только `tender_id`), отсутствие теста на "нет candidate_id вовсе" (добавлен) — все закрыты в этом же коммите, т.к. дёшево и без нового риска.
+
+**Осознанно НЕ исправлено, зафиксировано в `docs/decisions/OPEN-QUESTIONS.md` (2026-08-09):** синхронный расчёт полного BOQ (потенциально тысячи строк) внутри HTTP-обработчика `GET /bid-readiness-candidate` — было замаскировано самим багом C1 (запрос почти всегда возвращал 0-1 страницу), теперь это реальная, спроектированная в исходном плане 4.A нагрузка; вопрос "не пора ли выносить в `apps/worker`" — отдельное архитектурное решение, не багфикс. `get_current_tender_version_id()` осталась неиспользуемой в проде (использовалась только этим маршрутом до фикса) — не удалена: легитимная переиспользуемая утилита с собственными тестами, решение об удалении отложено до появления второго потребителя или явного решения владельца.
+
+**Вывод полного прогона после фикса:**
+```
+$ python -m pytest tests/ -q -m "not live_network"
+436 passed, 33 skipped, 3 deselected in 318.89s (0:05:18)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps
+251 files already formatted / All checks passed! / Success: no issues found in 84 source files
+```
+`check_v1_untouched.py` — тот же известный, неблокирующий паттерн (гитигнорируемые SDD-скретч-отчёты цитируют предупреждение чекера).
+
+**Дальше:** ветка готова к слиянию (`finishing-a-development-branch`).
+
+**Блокеры:** нет.

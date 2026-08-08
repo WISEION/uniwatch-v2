@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import httpx
 from fastapi import Header, Request
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -36,3 +37,14 @@ async def get_current_identity(
     if identity is None:
         raise ApiError(status_code=401, code="unauthenticated", message="unknown or disabled user")
     return identity
+
+
+async def get_vendor_http_client(request: Request) -> httpx.AsyncClient | None:
+    """None in production (packages.contracts.vendor_api.list_vendor_offers
+    opens and closes its own client per call, same as every other caller of
+    that function) -- overridden in tests via
+    app.dependency_overrides[get_vendor_http_client] to point at an
+    in-process vendor app through httpx.ASGITransport, exactly like
+    tests/contract/test_tender_vendor_contract.py already does for
+    list_vendor_offers directly."""
+    return getattr(request.app.state, "vendor_http_client", None)

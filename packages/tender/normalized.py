@@ -45,6 +45,43 @@ async def get_or_create_tender(conn: AsyncConnection, *, source: str, identity_k
     ).scalar_one()
 
 
+async def get_event_id_for_tender(conn: AsyncConnection, *, tender_id: int) -> int | None:
+    """Bridges a real event_details-sourced tender to the numeric eTender
+    event id (Task 4.A Final Review, finding C1): BOM-lines pages are
+    ingested under a *different* `tenders` identity than the tender's own
+    event_details (BOM_LINES_PAGE_CONTRACT's identity_query_keys include
+    PageNumber; EVENT_DETAILS_CONTRACT's is just "id" -- etender_contract.py),
+    so there is no single tender_version that holds a whole tender's BOQ.
+    `boq_lines` is the real aggregate -- keyed by (source, event_id),
+    independent of any one page's tender_version_id (boq_lines_event_idx).
+    Returns None (never guessed) when this tender has no current version, or
+    its current version was never ingested via ingest_event_details (so its
+    normalized_fields carries no "id")."""
+    row = (
+        await conn.execute(
+            text(
+                """
+                SELECT tv.normalized_fields ->> 'id' AS event_id
+                FROM tenders t
+                JOIN tender_versions tv ON tv.id = t.current_version_id
+                WHERE t.id = :tender_id
+                """
+            ),
+            {"tender_id": tender_id},
+        )
+    ).first()
+    if row is None or row[0] is None:
+        return None
+    return int(row[0])
+
+
+async def get_current_tender_version_id(conn: AsyncConnection, *, tender_id: int) -> int | None:
+    row = (await conn.execute(text("SELECT current_version_id FROM tenders WHERE id = :id"), {"id": tender_id})).first()
+    if row is None:
+        return None
+    return row[0]
+
+
 async def create_normalized_version(
     conn: AsyncConnection,
     *,

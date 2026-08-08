@@ -45,6 +45,10 @@ async def test_ingest_real_fixture_creates_raw_snapshot_and_normalized_version(e
     # FR-TND-10: the actual response value is used, never a requested filter value.
     assert version.normalized_fields["event_type_actual"] == 7
     assert version.normalized_fields["organization_voen"] == "1000418451"
+    # Task 4.A Final Review, finding C1: this is the only field that bridges
+    # an event_details tender back to the real (source, event_id) BOQ
+    # aggregate key (packages/tender/normalized.py's get_event_id_for_tender).
+    assert version.normalized_fields["id"] == payload["id"]
 
     async with engine.begin() as conn:
         row = (
