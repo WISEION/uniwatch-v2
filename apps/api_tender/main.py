@@ -15,7 +15,7 @@ from packages.platform.errors import install_error_handlers
 from packages.platform.logging import configure_logging
 from packages.platform.settings import Settings, get_settings
 
-from .routers import admin_users, health
+from .routers import admin_users, decision, health
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -40,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_error_handlers(app)
     app.include_router(health.router)
     app.include_router(admin_users.router)
+    app.include_router(decision.router)
     return app
 
 
