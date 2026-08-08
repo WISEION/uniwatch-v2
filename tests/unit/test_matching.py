@@ -48,6 +48,7 @@ def _offer(
     vendor_name: str = "Vendor A",
     material: str = "cement M400",
     inventory: float = 40.0,
+    moq: float = 1.0,
     uom: str = "t",
     valid_until: str = "2026-09-01T00:00:00+00:00",
     has_positive_reputation: bool = False,
@@ -70,7 +71,7 @@ def _offer(
         vat_rate=vat_rate,
         uom=uom,
         uom_canonical_qty=1.0,
-        moq=1.0,
+        moq=moq,
         capacity=100.0,
         inventory=inventory,
         valid_from="2026-08-01T00:00:00+00:00",
@@ -96,6 +97,41 @@ def test_classify_candidate_flags_fresh_and_sufficient_volume():
 
     assert candidate.freshness == "fresh"
     assert candidate.volume_status == "sufficient"
+
+
+def test_moq_exceeds_qty_is_flagged_but_does_not_change_volume_status_or_traffic_light():
+    # A vendor whose MOQ (100) is well above the BOQ line's qty (10) --
+    # visible fact, not an executability block (no source document
+    # confirms MOQ should gate executability).
+    boq_line = _boq_line(qty="10")
+    offer = _offer(inventory=40.0, moq=100.0)
+
+    candidate = classify_candidate(boq_line, offer, as_of=AS_OF)
+
+    assert candidate.moq_exceeds_qty is True
+    assert candidate.volume_status == "sufficient"
+
+    match = match_boq_line(boq_line, [offer], as_of=AS_OF)
+    assert match.traffic_light != "red"
+    assert any(c.moq_exceeds_qty for c in match.candidates)
+
+
+def test_moq_within_qty_is_not_flagged():
+    boq_line = _boq_line(qty="10")
+    offer = _offer(inventory=40.0, moq=5.0)
+
+    candidate = classify_candidate(boq_line, offer, as_of=AS_OF)
+
+    assert candidate.moq_exceeds_qty is False
+
+
+def test_moq_exceeds_qty_is_false_when_units_are_not_comparable():
+    boq_line = _boq_line(qty="10", unit_status="unmapped", unit_canonical=None)
+    offer = _offer(inventory=40.0, moq=100.0)
+
+    candidate = classify_candidate(boq_line, offer, as_of=AS_OF)
+
+    assert candidate.moq_exceeds_qty is False
 
 
 def test_classify_candidate_flags_stale_when_as_of_past_valid_until():

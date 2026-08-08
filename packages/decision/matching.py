@@ -34,6 +34,16 @@ collapsed it to the bare `"adverse_case"` volume_status and dropped the
 sub-type, leaving a human reviewing a flagged line with no way to tell
 "stale offer" from "capacity shortfall" without going back to the raw offer.
 
+`MatchCandidate.moq_exceeds_qty` is a visible, non-gating flag (offer.moq
+> boq_line.qty, only computed when units are comparable the same way
+volume_status requires): recorded 2026-08-06 as a deliberately deferred
+gap because no source document confirms MOQ should block executability
+(in real procurement it usually just means paying for excess, not a hard
+stop) -- encoding a MOQ-blocks-executability rule would risk inventing a
+business rule, not reading one. This flag surfaces the fact (hard ban #3:
+surfaced, never hidden) without deciding what it means -- it never changes
+volume_status, `_is_strong_source`, or the traffic light.
+
 `price_with_vat` treats `vat_rate` as a PERCENT (18.0 means 18%), matching
 the only real producer of this field, packages/vendor/synthetic_provider.py
 -- not a fraction (0.18). Getting this backwards inflates every price by
@@ -95,6 +105,7 @@ class MatchCandidate:
     freshness: str  # "fresh" | "stale"
     volume_status: str  # "sufficient" | "insufficient" | "unit_mismatch" | "unit_unmapped" | "adverse_case"
     adverse_case: str | None  # the FR-VND-03 sub-type when volume_status == "adverse_case", else None
+    moq_exceeds_qty: bool  # visible only -- never gates volume_status or the traffic light, see module docstring
     executable_status: str  # raw tier: "reserved" | "confirmed" | "reported" | "unknown"
     effective_executable_status: str  # same tiers, after INV-19's reputation downgrade
     has_positive_reputation: bool
@@ -142,6 +153,15 @@ def _volume_status(boq_line: BoqLine, offer: VendorOfferDTO) -> str:
     return "insufficient"
 
 
+def _moq_exceeds_qty(boq_line: BoqLine, offer: VendorOfferDTO) -> bool:
+    if boq_line.unit_status != "mapped":
+        return False
+    offer_unit = canonicalize_unit(offer.uom)
+    if offer_unit.status != "mapped" or offer_unit.canonical != boq_line.unit_canonical:
+        return False
+    return Decimal(str(offer.moq)) > boq_line.qty
+
+
 def _price_with_vat(offer: VendorOfferDTO) -> Decimal:
     return Decimal(str(offer.price)) * (Decimal("1") + Decimal(str(offer.vat_rate)) / Decimal("100"))
 
@@ -159,6 +179,7 @@ def classify_candidate(boq_line: BoqLine, offer: VendorOfferDTO, *, as_of: datet
         freshness=_freshness(offer, as_of),
         volume_status=_volume_status(boq_line, offer),
         adverse_case=offer.adverse_case,
+        moq_exceeds_qty=_moq_exceeds_qty(boq_line, offer),
         executable_status=offer.executable_status,
         effective_executable_status=offer.effective_executable_status,
         has_positive_reputation=offer.has_positive_reputation,
