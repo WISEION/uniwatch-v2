@@ -1012,3 +1012,31 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** изучить точный объём 4.A, свериться с текущим состоянием `packages/decision`/`packages/algorithm`, составить план задачи перед началом кода.
 
 **Блокеры:** нет.
+
+## 2026-08-08 — Задание: Phase 4, задача 4.A (Decision Core), реализация (subagent-driven, 5 подзадач + 3 раунда правок по ревью)
+
+**Сделано:**
+- `packages/decision/matching.py::is_strong_source` — публичный (был `_is_strong_source`); `packages/tender/boq_lines_store.py::list_boq_lines_by_tender_version()` + `packages/tender/normalized.py::get_current_tender_version_id()` — первый реальный путь от `tenders.id` к персистентным `BoqLine`.
+- `packages/decision/decision_model.py` — `GoNoGoInputs` (владелец явно решил в чате: квалификация/финансирование/репутация заказчика/подозрение на «нарисованный» тендер вводятся человеком как свободный текст, ничего не вычисляется — обоснование в OPEN-QUESTIONS), `Decision` (append-only, пять типов, `__post_init__` бросает на неизвестном), `LockInRequirement`.
+- `packages/decision/bid_readiness.py::build_bid_readiness_candidate()` — единственный реально вычисляемый Bid/No-Bid сигнал: покрытие BOQ деньгами против порога `~85%` из самой спецификации, и строки, зависящие от единственного «сильного» (`is_strong_source`) вендора.
+- Migration `0014_decision_core.sql` (schema version 13→14) + `packages/decision/decision_store.py` — персистентность, `decisions` без единого UPDATE/DELETE.
+- `apps/api_tender/routers/decision.py` — три маршрута под `/tenders/{tender_id}`. `GET /bid-readiness-candidate` — первое место в кодовой базе, где `match_boq_line`/`summarize_boq_matches` реально вызываются против персистентных BOQ-строк тендера и настоящего постраничного запроса к Vendor-сервису (задача 3.D's финальный ревью зафиксировал этот разрыв как реальный, но отложенный — здесь закрыт). `POST /decisions` на `bid`/`conditional_bid` автоматически создаёт `LockInRequirement` по каждой критической строке (INV-20's половина «идентификации»).
+- Полное поведенческое тестовое покрытие (`tests/integration/test_decision_api.py`): RBAC deny-by-default (401 и 403), idempotency-replay с проверкой отсутствия дубликата в БД, живой запрос к реальному Vendor-сервису (два сильных вендора → green, один вендор → critical line), генерация lock-in с прямой проверкой строки в БД, аудит-лог обеих мутаций.
+- **Три раунда правок по ревью, все реальные найденные баги:**
+  1. Задача 3: неиспользуемый импорт в тесте ломал `ruff check` (упало бы CI).
+  2. Задача 4: наивный `as_of` падал с 500 вместо чистого 422 (воспроизведено эмпирически); плохой FK-referenced id на обоих POST падал с 500 вместо 422 `invalid_reference`; ни одна мутация не писала audit-лог, хотя `admin_users.py` — единственный прецедент в кодовой базе — делает это на каждой. Все три исправлены и подтверждены реальным запуском (не только чтением diff).
+  3. Задача 5: удаление устаревшего smoke-check файла случайно уничтожило единственное покрытие двух из трёх багов задачи 4 (найдено финальным ревью задачи 5, восстановлено); тест «no lock-ins on non-bid decision» проходил по неверной причине (не было привязанного candidate, а не потому что тип решения — no_go; исправлено на реальный candidate с критической строкой); тест генерации lock-in не проверял БД напрямую; отсутствовала проверка audit-лога; idempotency заявлялась в докстринге, но не тестировалась; RBAC 403 (аутентифицирован, но без прав) не тестировался вообще. Все шесть исправлений подтверждены мутационным тестированием ревьюером (намеренно ломал код, убеждался что тест это ловит).
+- **Осознанно не построено, зафиксировано, не замолчано (`docs/decisions/OPEN-QUESTIONS.md`, 2026-08-08):** маржа/концентрация риска/загрузка ресурсов, P316's «три вероятности», настоящая генерация LOI-документа, INV-06's maker/checker поток отмены No-Go, хардкод `data_realm="vendor-sandbox"`, отсутствие `role` в audit-логе, побочный эффект записи на каждый GET bid-readiness-candidate, невидимость пропуска lock-in при отсутствии candidate_id, общий код `not_found` на двух разных 404, отсутствие прямого теста на `IntegrityError`→422 у `POST /decisions` (тот же паттерн уже проверен на другом маршруте).
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network" --deselect tests/security/test_worldbank_live_fetch.py::test_live_fetch_against_real_worldbank_api
+428 passed, 33 skipped, 4 deselected in 293.32s (0:04:53)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps
+251 files already formatted / All checks passed! / Success: no issues found in 84 source files
+```
+`check_v1_untouched.py` продолжает флагировать только гитигнорируемые скретч-отчёты этого плана (`.superpowers/sdd/.../task-{2,4,5}-report.md`), содержащие цитату предупреждения самого чекера — тот же известный, неблокирующий паттерн, что и во всех предыдущих заданиях этой сессии. Ни один реально закоммиченный файл не содержит литерала v1-пути.
+
+**Дальше:** Decision Core проверен end-to-end (живой BOQ↔vendor запрос → candidate → человеческое решение → lock-in флагирование). Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7: задача 4.B (post-submission tracking) или 4.C (Execution Ledger — заодно закроет отложенный пробел с репутацией заказчика).
+
+**Блокеры:** нет новых. Все перечисленные пробелы — некритичные, та же дисциплина, что и во всех предыдущих фазах.

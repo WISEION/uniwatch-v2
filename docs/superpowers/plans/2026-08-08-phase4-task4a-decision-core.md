@@ -428,9 +428,7 @@ def test_full_coverage_with_two_strong_vendors_is_not_a_lottery():
         _offer(2, "Vendor B", "rebar-12mm"),
     ]
 
-    candidate = build_bid_readiness_candidate(
-        42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00"
-    )
+    candidate = build_bid_readiness_candidate(42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00")
 
     assert candidate.tender_id == 42
     assert candidate.summary.green_pct == 100.0
@@ -442,9 +440,7 @@ def test_zero_coverage_is_a_lottery():
     boq_lines = [_boq_line(1, "excavation works", "1000")]
     offers = [_offer(1, "Vendor A", "rebar-12mm")]
 
-    candidate = build_bid_readiness_candidate(
-        42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00"
-    )
+    candidate = build_bid_readiness_candidate(42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00")
 
     assert candidate.summary.red_pct == 100.0
     assert candidate.is_lottery is True
@@ -458,9 +454,7 @@ def test_single_vendor_line_is_flagged_critical():
     boq_lines = [_boq_line(1, "rebar-12mm", "1000")]
     offers = [_offer(1, "Vendor A", "rebar-12mm")]
 
-    candidate = build_bid_readiness_candidate(
-        42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00"
-    )
+    candidate = build_bid_readiness_candidate(42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00")
 
     assert len(candidate.critical_lines) == 1
     assert candidate.critical_lines[0].boqline_source_line_id == 1
@@ -474,9 +468,7 @@ def test_two_strong_vendor_line_is_not_flagged_critical():
         _offer(2, "Vendor B", "rebar-12mm"),
     ]
 
-    candidate = build_bid_readiness_candidate(
-        42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00"
-    )
+    candidate = build_bid_readiness_candidate(42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00")
 
     assert candidate.critical_lines == ()
 
@@ -485,9 +477,7 @@ def test_non_matchable_line_type_is_excluded_and_not_critical():
     boq_lines = [_boq_line(1, "preliminaries and general conditions", "500", line_type="preliminaries")]
     offers = [_offer(1, "Vendor A", "rebar-12mm")]
 
-    candidate = build_bid_readiness_candidate(
-        42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00"
-    )
+    candidate = build_bid_readiness_candidate(42, boq_lines, offers, as_of=AS_OF, computed_at="2026-08-08T00:00:00+00:00")
 
     assert candidate.summary.non_matchable_line_count == 1
     assert candidate.critical_lines == ()
@@ -644,9 +634,7 @@ def build_bid_readiness_candidate(
     as_of: datetime,
     computed_at: str,
 ) -> BidReadinessCandidate:
-    matches = {
-        line.source_line_id: match_boq_line(line, offers, as_of=as_of) for line in boq_lines if line.line_type == "normal"
-    }
+    matches = {line.source_line_id: match_boq_line(line, offers, as_of=as_of) for line in boq_lines if line.line_type == "normal"}
     summary = summarize_boq_matches(boq_lines, matches)
     coverage_pct = summary.green_pct + summary.yellow_pct
     return BidReadinessCandidate(
@@ -1442,9 +1430,7 @@ async def create_decision(
     identity: Identity = Depends(require_permission("decision.decisions.create", get_current_identity)),
 ) -> DecisionResponse:
     if body.decision_type not in DECISION_TYPES:
-        raise ApiError(
-            status_code=422, code="unknown_decision_type", message=f"unknown decision_type: {body.decision_type}"
-        )
+        raise ApiError(status_code=422, code="unknown_decision_type", message=f"unknown decision_type: {body.decision_type}")
 
     route = "POST /tenders/{tender_id}/decisions"
     request_fingerprint = fingerprint({"tender_id": tender_id, **body.model_dump(mode="json")})
