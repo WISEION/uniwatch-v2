@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.contracts.vendor_api import VendorApiError, list_vendor_offers
@@ -34,6 +35,7 @@ from packages.decision.decision_store import (
     store_go_no_go_inputs,
     store_lock_in_requirement,
 )
+from packages.platform.audit import write_audit_log
 from packages.platform.errors import ApiError
 from packages.platform.idempotency import IdempotencyKeyReused, IdempotencyStore, fingerprint
 from packages.platform.rbac.dependency import require_permission
@@ -149,7 +151,19 @@ async def create_go_no_go_inputs(
         entered_by=identity.subject,
         entered_at=entered_at,
     )
-    inputs_id = await store_go_no_go_inputs(conn, inputs)
+    try:
+        inputs_id = await store_go_no_go_inputs(conn, inputs)
+    except IntegrityError as exc:
+        raise ApiError(status_code=422, code="invalid_reference", message=f"tender {tender_id} does not exist") from exc
+    await write_audit_log(
+        conn,
+        actor=identity.subject,
+        action="go_no_go_inputs.create",
+        object_type="go_no_go_inputs",
+        object_id=str(inputs_id),
+        object_version=None,
+        reason=None,
+    )
     response = GoNoGoInputsResponse(
         id=inputs_id,
         tender_id=tender_id,
@@ -174,6 +188,9 @@ async def get_bid_readiness_candidate(
     vendor_http_client: httpx.AsyncClient | None = Depends(get_vendor_http_client),
     identity: Identity = Depends(require_permission("decision.bid_readiness.read", get_current_identity)),
 ) -> BidReadinessCandidateResponse:
+    if as_of.tzinfo is None:
+        raise ApiError(status_code=422, code="naive_datetime", message="as_of must include a timezone offset")
+
     tender_version_id = await get_current_tender_version_id(conn, tender_id=tender_id)
     if tender_version_id is None:
         raise ApiError(status_code=404, code="not_found", message=f"tender {tender_id} not found or has no version")
@@ -248,11 +265,33 @@ async def create_decision(
         go_no_go_inputs_id=body.go_no_go_inputs_id,
         bid_readiness_candidate_id=body.bid_readiness_candidate_id,
     )
-    decision_id = await store_decision(conn, decision)
+    try:
+        decision_id = await store_decision(conn, decision)
+    except IntegrityError as exc:
+        raise ApiError(
+            status_code=422,
+            code="invalid_reference",
+            message=(
+                f"tender {tender_id}, go_no_go_inputs_id {body.go_no_go_inputs_id}, "
+                f"or bid_readiness_candidate_id {body.bid_readiness_candidate_id} does not exist"
+            ),
+        ) from exc
+    await write_audit_log(
+        conn,
+        actor=identity.subject,
+        action="decision.create",
+        object_type="decision",
+        object_id=str(decision_id),
+        object_version=None,
+        reason=decision.justification,
+    )
 
     lock_ins: list[LockInRequirementResponse] = []
     if body.decision_type in ("bid", "conditional_bid") and body.bid_readiness_candidate_id is not None:
-        candidate_row = await load_bid_readiness_candidate(conn, body.bid_readiness_candidate_id)
+        try:
+            candidate_row = await load_bid_readiness_candidate(conn, body.bid_readiness_candidate_id)
+        except ValueError as exc:
+            raise ApiError(status_code=422, code="invalid_reference", message=str(exc)) from exc
         for line in candidate_row["critical_lines"]:
             lock_in_id = await store_lock_in_requirement(
                 conn,
