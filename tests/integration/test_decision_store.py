@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from packages.decision.bid_readiness import BidReadinessCandidate, CriticalLine
 from packages.decision.boq_summary import BoqMatchSummary
-from packages.decision.decision_model import Decision, GoNoGoInputs, LockInRequirement
+from packages.decision.decision_model import Decision, GoNoGoInputs
 from packages.decision.decision_store import (
     list_lock_in_requirements_by_tender,
     load_bid_readiness_candidate,
