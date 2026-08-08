@@ -23,8 +23,8 @@ async def test_apply_all_on_empty_db_applies_every_migration(asyncpg_dsn):
     runner = MigrationRunner(asyncpg_dsn, MIGRATIONS_DIR)
     applied = await runner.apply_all()
     versions = {m.version for m in applied}
-    assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
-    assert await runner.current_version() == 13
+    assert versions == {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
+    assert await runner.current_version() == 14
 
 
 async def test_apply_all_is_idempotent_on_already_migrated_db(asyncpg_dsn):
@@ -32,7 +32,7 @@ async def test_apply_all_is_idempotent_on_already_migrated_db(asyncpg_dsn):
     await runner.apply_all()
     second_run = await runner.apply_all()
     assert second_run == []
-    assert await runner.current_version() == 13
+    assert await runner.current_version() == 14
 
 
 async def test_apply_all_on_seeded_db_only_applies_pending(asyncpg_dsn):
@@ -53,7 +53,7 @@ async def test_apply_all_on_seeded_db_only_applies_pending(asyncpg_dsn):
         await conn.close()
 
     applied = await runner.apply_all()
-    assert {m.version for m in applied} == {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
+    assert {m.version for m in applied} == {2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
 
 
 async def test_edited_migration_after_apply_raises_checksum_mismatch(asyncpg_dsn, tmp_path):
@@ -122,5 +122,5 @@ async def test_startup_check_raises_on_version_mismatch(asyncpg_dsn):
 async def test_startup_check_passes_when_versions_match(asyncpg_dsn):
     runner = MigrationRunner(asyncpg_dsn, MIGRATIONS_DIR)
     await runner.apply_all()
-    version = await assert_schema_up_to_date(asyncpg_dsn, MIGRATIONS_DIR, expected_version=13)
-    assert version == 13
+    version = await assert_schema_up_to_date(asyncpg_dsn, MIGRATIONS_DIR, expected_version=14)
+    assert version == 14

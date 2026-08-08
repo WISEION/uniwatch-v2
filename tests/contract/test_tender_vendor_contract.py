@@ -19,7 +19,7 @@ from packages.vendor.vendor_store import store_offer, store_vendor
 
 
 async def test_ping_vendor_service_round_trip_against_the_real_vendor_app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=13)
+    settings = Settings(database_url=_database_url, expected_schema_version=14)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
     transport = httpx.ASGITransport(app=vendor_app, raise_app_exceptions=False)
@@ -36,7 +36,7 @@ async def test_ping_vendor_service_ambient_correlation_id_reaches_the_real_vendo
     # back whatever correlation id it received on the response -- if the
     # client's ambient id didn't reach it, this would echo a freshly
     # minted id instead.
-    settings = Settings(database_url=_database_url, expected_schema_version=13)
+    settings = Settings(database_url=_database_url, expected_schema_version=14)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
     transport = httpx.ASGITransport(app=vendor_app, raise_app_exceptions=False)
@@ -52,7 +52,7 @@ async def test_ping_vendor_service_ambient_correlation_id_reaches_the_real_vendo
 
 
 async def test_list_vendor_offers_round_trip_against_the_real_vendor_app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=13)
+    settings = Settings(database_url=_database_url, expected_schema_version=14)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
