@@ -42,7 +42,7 @@ gap because no source document confirms MOQ should block executability
 stop) -- encoding a MOQ-blocks-executability rule would risk inventing a
 business rule, not reading one. This flag surfaces the fact (hard ban #3:
 surfaced, never hidden) without deciding what it means -- it never changes
-volume_status, `_is_strong_source`, or the traffic light.
+volume_status, `is_strong_source`, or the traffic light.
 
 `price_with_vat` treats `vat_rate` as a PERCENT (18.0 means 18%), matching
 the only real producer of this field, packages/vendor/synthetic_provider.py
@@ -69,7 +69,7 @@ for the missing terms.
 
 Executable Availability (task 3.C, TENDER_INTELLIGENCE_SPEC.md Section6.3,
 INV-19, P314) gates both the traffic light and the TCO ranking: a source
-only counts as "strong" (`_is_strong_source`) when its
+only counts as "strong" (`is_strong_source`) when its
 `effective_executable_status` -- the vendor's raw claim, downgraded one
 tier if it carries a negative ReputationFact, see
 packages/vendor/availability_model.py -- is `reserved` or `confirmed`, not
@@ -188,7 +188,7 @@ def classify_candidate(boq_line: BoqLine, offer: VendorOfferDTO, *, as_of: datet
     )
 
 
-def _is_strong_source(candidate: MatchCandidate) -> bool:
+def is_strong_source(candidate: MatchCandidate) -> bool:
     return (
         candidate.volume_status == "sufficient"
         and candidate.freshness == "fresh"
@@ -200,7 +200,7 @@ def _traffic_light(candidates: tuple[MatchCandidate, ...]) -> str:
     sources = tuple(c for c in candidates if c.volume_status != "insufficient")
     if not sources:
         return "red"
-    confirmed_fresh_by_vendor = {c.vendor_id: c for c in sources if _is_strong_source(c)}
+    confirmed_fresh_by_vendor = {c.vendor_id: c for c in sources if is_strong_source(c)}
     if len(confirmed_fresh_by_vendor) >= 2 and any(c.has_positive_reputation for c in confirmed_fresh_by_vendor.values()):
         return "green"
     return "yellow"
@@ -209,7 +209,7 @@ def _traffic_light(candidates: tuple[MatchCandidate, ...]) -> str:
 def rank_executable_candidates_by_tco(
     candidates: tuple[MatchCandidate, ...],
 ) -> tuple[tuple[MatchCandidate, TcoEstimate], ...]:
-    executable = [c for c in candidates if _is_strong_source(c)]
+    executable = [c for c in candidates if is_strong_source(c)]
     if not executable:
         return ()
     currency_counts: dict[str, int] = {}

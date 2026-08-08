@@ -5,7 +5,7 @@ history because details/BOM overwrote in place with COALESCE)."""
 
 from __future__ import annotations
 
-from packages.tender.normalized import create_normalized_version, get_or_create_tender
+from packages.tender.normalized import create_normalized_version, get_current_tender_version_id, get_or_create_tender
 from packages.tender.raw_snapshot import save_raw_snapshot
 
 
@@ -56,3 +56,22 @@ async def test_second_normalization_creates_a_new_version_not_an_overwrite(engin
     assert v1.normalized_fields == {"estimated_amount": 16922253.74}
     assert v1.raw_snapshot_id == snap1
     assert v2.raw_snapshot_id == snap2
+
+
+async def test_get_current_tender_version_id_returns_the_current_version(engine):
+    async with engine.begin() as conn:
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-event-4a-version")
+        snap = await _snapshot(conn, b'{"eventId": 999002}')
+        version = await create_normalized_version(
+            conn, tender_id=tender_id, raw_snapshot_id=snap, parser_version="v1", normalized_fields={}
+        )
+        current_version_id = await get_current_tender_version_id(conn, tender_id=tender_id)
+
+    assert current_version_id == version.id
+
+
+async def test_get_current_tender_version_id_returns_none_for_unknown_tender(engine):
+    async with engine.begin() as conn:
+        result = await get_current_tender_version_id(conn, tender_id=999999999)
+
+    assert result is None

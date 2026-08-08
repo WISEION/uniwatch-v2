@@ -10,8 +10,8 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from packages.tender.boq_line_model import build_boq_lines
-from packages.tender.boq_lines_store import store_boq_lines
+from packages.tender.boq_line_model import BoqLine, build_boq_lines
+from packages.tender.boq_lines_store import list_boq_lines_by_tender_version, store_boq_lines
 from packages.tender.normalized import create_normalized_version, get_or_create_tender
 from packages.tender.raw_snapshot import save_raw_snapshot
 
@@ -103,3 +103,51 @@ async def test_stored_lines_trace_back_to_their_raw_snapshot_and_version(engine)
         )
     assert row["tender_version_id"] == version_id
     assert row["raw_snapshot_id"] == snapshot_id
+
+
+async def test_list_boq_lines_by_tender_version_returns_stored_lines(engine):
+    line = BoqLine(
+        source_line_id=501,
+        page_number=1,
+        section="Section A",
+        category_code=None,
+        description="rebar-12mm reinforcement steel",
+        unit_raw="t",
+        unit_canonical="t",
+        unit_status="mapped",
+        qty=Decimal("10"),
+        line_type="normal",
+        spec_requirements=(),
+        rate=Decimal("850"),
+        amount=Decimal("8500"),
+    )
+
+    async with engine.begin() as conn:
+        raw_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="event_details",
+            identity_key="test-event-4a",
+            raw_body=b'{"eventId": 999001}',
+            contract_version="v1",
+            correlation_id="test-4a",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-event-4a")
+        version = await create_normalized_version(
+            conn, tender_id=tender_id, raw_snapshot_id=raw_snapshot_id, parser_version="v1", normalized_fields={}
+        )
+        await store_boq_lines(
+            conn,
+            source="etender",
+            event_id=999001,
+            tender_version_id=version.id,
+            raw_snapshot_id=raw_snapshot_id,
+            lines=[line],
+        )
+        result = await list_boq_lines_by_tender_version(conn, tender_version_id=version.id)
+
+    assert len(result) == 1
+    assert result[0].source_line_id == 501
+    assert result[0].description == "rebar-12mm reinforcement steel"
+    assert result[0].qty == Decimal("10")
+    assert result[0].amount == Decimal("8500")

@@ -45,6 +45,13 @@ async def get_or_create_tender(conn: AsyncConnection, *, source: str, identity_k
     ).scalar_one()
 
 
+async def get_current_tender_version_id(conn: AsyncConnection, *, tender_id: int) -> int | None:
+    row = (await conn.execute(text("SELECT current_version_id FROM tenders WHERE id = :id"), {"id": tender_id})).first()
+    if row is None:
+        return None
+    return row[0]
+
+
 async def create_normalized_version(
     conn: AsyncConnection,
     *,
