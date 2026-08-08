@@ -41,6 +41,15 @@ async def store_go_no_go_inputs(conn: AsyncConnection, inputs: GoNoGoInputs) -> 
     ).scalar_one()
 
 
+async def load_go_no_go_inputs(conn: AsyncConnection, inputs_id: int) -> dict[str, Any] | None:
+    row = (
+        (await conn.execute(text("SELECT id, tender_id FROM go_no_go_inputs WHERE id = :id"), {"id": inputs_id}))
+        .mappings()
+        .first()
+    )
+    return dict(row) if row is not None else None
+
+
 async def store_bid_readiness_candidate(conn: AsyncConnection, candidate: BidReadinessCandidate) -> int:
     critical_lines_json = json.dumps(
         [

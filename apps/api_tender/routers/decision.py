@@ -18,6 +18,7 @@ vendor-production data exists (docs/decisions/OPEN-QUESTIONS.md)."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Header, Request
@@ -30,6 +31,7 @@ from packages.decision.bid_readiness import build_bid_readiness_candidate
 from packages.decision.decision_model import DECISION_TYPES, Decision, GoNoGoInputs
 from packages.decision.decision_store import (
     load_bid_readiness_candidate,
+    load_go_no_go_inputs,
     store_bid_readiness_candidate,
     store_decision,
     store_go_no_go_inputs,
@@ -40,8 +42,8 @@ from packages.platform.errors import ApiError
 from packages.platform.idempotency import IdempotencyKeyReused, IdempotencyStore, fingerprint
 from packages.platform.rbac.dependency import require_permission
 from packages.platform.rbac.models import Identity
-from packages.tender.boq_lines_store import list_boq_lines_by_tender_version
-from packages.tender.normalized import get_current_tender_version_id
+from packages.tender.boq_lines_store import list_boq_lines_by_event
+from packages.tender.normalized import get_event_id_for_tender
 
 from ..deps import get_connection, get_current_identity, get_vendor_http_client
 
@@ -191,11 +193,11 @@ async def get_bid_readiness_candidate(
     if as_of.tzinfo is None:
         raise ApiError(status_code=422, code="naive_datetime", message="as_of must include a timezone offset")
 
-    tender_version_id = await get_current_tender_version_id(conn, tender_id=tender_id)
-    if tender_version_id is None:
-        raise ApiError(status_code=404, code="not_found", message=f"tender {tender_id} not found or has no version")
+    event_id = await get_event_id_for_tender(conn, tender_id=tender_id)
+    if event_id is None:
+        raise ApiError(status_code=404, code="not_found", message=f"tender {tender_id} not found or has no resolvable event id")
 
-    boq_lines = await list_boq_lines_by_tender_version(conn, tender_version_id=tender_version_id)
+    boq_lines = await list_boq_lines_by_event(conn, source="etender", event_id=event_id)
     if not boq_lines:
         raise ApiError(status_code=404, code="not_found", message=f"tender {tender_id} has no BOQ lines")
 
@@ -253,6 +255,32 @@ async def create_decision(
     if existing is not None:
         return DecisionResponse(**existing.response_body)
 
+    # C2 (Task 4.A Final Review): decisions is append-only, so a candidate
+    # or go-no-go-inputs row belonging to a DIFFERENT tender must be rejected
+    # before anything is written -- otherwise this endpoint lets one tender's
+    # decision silently carry another tender's inputs/lock-in data forever.
+    if body.go_no_go_inputs_id is not None:
+        go_no_go_row = await load_go_no_go_inputs(conn, body.go_no_go_inputs_id)
+        if go_no_go_row is None or go_no_go_row["tender_id"] != tender_id:
+            raise ApiError(
+                status_code=422,
+                code="invalid_reference",
+                message=f"go_no_go_inputs_id {body.go_no_go_inputs_id} does not belong to tender {tender_id}",
+            )
+
+    candidate_row: dict[str, Any] | None = None
+    if body.bid_readiness_candidate_id is not None:
+        try:
+            candidate_row = await load_bid_readiness_candidate(conn, body.bid_readiness_candidate_id)
+        except ValueError as exc:
+            raise ApiError(status_code=422, code="invalid_reference", message=str(exc)) from exc
+        if candidate_row["tender_id"] != tender_id:
+            raise ApiError(
+                status_code=422,
+                code="invalid_reference",
+                message=f"bid_readiness_candidate_id {body.bid_readiness_candidate_id} does not belong to tender {tender_id}",
+            )
+
     decided_at = datetime.now(UTC).isoformat()
     decision = Decision(
         tender_id=tender_id,
@@ -287,11 +315,7 @@ async def create_decision(
     )
 
     lock_ins: list[LockInRequirementResponse] = []
-    if body.decision_type in ("bid", "conditional_bid") and body.bid_readiness_candidate_id is not None:
-        try:
-            candidate_row = await load_bid_readiness_candidate(conn, body.bid_readiness_candidate_id)
-        except ValueError as exc:
-            raise ApiError(status_code=422, code="invalid_reference", message=str(exc)) from exc
+    if body.decision_type in ("bid", "conditional_bid") and candidate_row is not None:
         for line in candidate_row["critical_lines"]:
             lock_in_id = await store_lock_in_requirement(
                 conn,

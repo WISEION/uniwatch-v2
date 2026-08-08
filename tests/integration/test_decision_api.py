@@ -120,8 +120,16 @@ async def tender_with_boq(engine):
             correlation_id="test-decision-api",
         )
         tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-decision-api-tender")
+        # normalized_fields carries "id": 42 -- the real event id an
+        # event_details ingestion stores (etender_connector.py's
+        # ingest_event_details) -- so get_event_id_for_tender resolves this
+        # tender to the SAME event_id the BOQ lines below are stored under.
+        # A bom_lines_page ingestion creates a page-scoped pseudo-tender
+        # with its own distinct tender_version_id (Task 4.A Final Review,
+        # finding C1) -- deliberately NOT the version_id used here, to keep
+        # this fixture honest about that split.
         version = await create_normalized_version(
-            conn, tender_id=tender_id, raw_snapshot_id=raw_snapshot_id, parser_version="v1", normalized_fields={}
+            conn, tender_id=tender_id, raw_snapshot_id=raw_snapshot_id, parser_version="v1", normalized_fields={"id": 42}
         )
         await store_boq_lines(
             conn, source="etender", event_id=42, tender_version_id=version.id, raw_snapshot_id=raw_snapshot_id, lines=[line]
@@ -509,3 +517,220 @@ async def test_go_no_go_inputs_without_permission_is_403(client, user_without_de
         headers={"Idempotency-Key": "k-403-test", "X-Dev-User": "no-perms-1"},
     )
     assert response.status_code == 403
+
+
+@pytest_asyncio.fixture
+async def tender_with_boq_on_a_different_tender_version(engine):
+    """Reproduces the real eTender ingestion split (Task 4.A Final Review,
+    finding C1): an event_details tender and its BOQ's bom_lines_page
+    tender are two DISTINCT `tenders` rows with two distinct
+    tender_version_ids (BOM_LINES_PAGE_CONTRACT's identity_query_keys
+    include PageNumber; EVENT_DETAILS_CONTRACT's is just "id" --
+    packages/tender/etender_contract.py). The only thing tying them
+    together is the shared numeric event_id: the event_details tender's
+    normalized_fields carries "id" (etender_connector.py's
+    ingest_event_details), and the BOQ lines are stored under that same
+    event_id but a DIFFERENT tender_version_id belonging to the second,
+    page-scoped pseudo-tender. Returns the event_details tender's id --
+    the one a human/API caller actually means by "this tender"."""
+    line = BoqLine(
+        source_line_id=1,
+        page_number=1,
+        section=None,
+        category_code=None,
+        description="Supply of rebar-12mm reinforcement steel",
+        unit_raw="t",
+        unit_canonical="t",
+        unit_status="mapped",
+        qty=Decimal("10"),
+        line_type="normal",
+        spec_requirements=(),
+        rate=Decimal("850"),
+        amount=Decimal("8500"),
+    )
+    async with engine.begin() as conn:
+        event_details_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="etender.event_details|id=77",
+            raw_body=json.dumps({"id": 77}).encode("utf-8"),
+            contract_version="etender.event_details",
+            correlation_id="test-c1-event-details",
+        )
+        event_details_tender_id = await get_or_create_tender(conn, source="etender", identity_key="etender.event_details|id=77")
+        await create_normalized_version(
+            conn,
+            tender_id=event_details_tender_id,
+            raw_snapshot_id=event_details_snapshot_id,
+            parser_version="etender-v1",
+            normalized_fields={"id": 77},
+        )
+
+        bom_page_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="etender.bom_lines_page",
+            identity_key="etender.bom_lines_page|event_id=77&PageNumber=1",
+            raw_body=json.dumps({"eventId": 77, "currentPage": 1}).encode("utf-8"),
+            contract_version="etender.bom_lines_page",
+            correlation_id="test-c1-bom-lines",
+        )
+        bom_page_tender_id = await get_or_create_tender(
+            conn, source="etender", identity_key="etender.bom_lines_page|event_id=77&PageNumber=1"
+        )
+        bom_page_version = await create_normalized_version(
+            conn,
+            tender_id=bom_page_tender_id,
+            raw_snapshot_id=bom_page_snapshot_id,
+            parser_version="etender-v1",
+            normalized_fields={"event_id": 77, "current_page": 1},
+        )
+        assert bom_page_tender_id != event_details_tender_id
+
+        await store_boq_lines(
+            conn,
+            source="etender",
+            event_id=77,
+            tender_version_id=bom_page_version.id,
+            raw_snapshot_id=bom_page_snapshot_id,
+            lines=[line],
+        )
+    return event_details_tender_id
+
+
+async def test_bid_readiness_candidate_resolves_boq_from_a_different_tenders_version(
+    client, pm_user, tender_with_boq_on_a_different_tender_version, two_strong_vendors
+):
+    response = await client.get(
+        f"/tenders/{tender_with_boq_on_a_different_tender_version}/bid-readiness-candidate",
+        params={"as_of": "2026-08-08T00:00:00Z"},
+        headers={"X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["green_pct"] == 100.0
+    assert body["total_priced_amount"] == "8500"
+
+
+async def test_decision_rejects_go_no_go_inputs_from_a_different_tender(client, pm_user, tender_with_boq, engine):
+    async with engine.begin() as conn:
+        other_raw_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="event_details",
+            identity_key="test-decision-api-other-tender",
+            raw_body=b'{"id": 43}',
+            contract_version="v1",
+            correlation_id="test-decision-api-other",
+        )
+        other_tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-decision-api-other-tender")
+        await create_normalized_version(
+            conn,
+            tender_id=other_tender_id,
+            raw_snapshot_id=other_raw_snapshot_id,
+            parser_version="v1",
+            normalized_fields={"id": 43},
+        )
+
+    go_no_go_response = await client.post(
+        f"/tenders/{other_tender_id}/go-no-go-inputs",
+        json={
+            "company_profile_notes": "x",
+            "qualification_notes": "x",
+            "financing_notes": "x",
+            "customer_reputation_notes": "x",
+            "pre_designated_winner_suspected": False,
+        },
+        headers={"Idempotency-Key": "k-c2-go-no-go", "X-Dev-User": "pm-1"},
+    )
+    other_inputs_id = go_no_go_response.json()["id"]
+
+    response = await client.post(
+        f"/tenders/{tender_with_boq}/decisions",
+        json={
+            "decision_type": "no_go",
+            "conditions": [],
+            "justification": "cross-tender reference attempt",
+            "go_no_go_inputs_id": other_inputs_id,
+        },
+        headers={"Idempotency-Key": "k-c2-decision", "X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_reference"
+
+    async with engine.begin() as conn:
+        count = (
+            await conn.execute(text("SELECT count(*) FROM decisions WHERE tender_id = :tid"), {"tid": tender_with_boq})
+        ).scalar_one()
+    assert count == 0
+
+
+async def test_decision_rejects_bid_readiness_candidate_from_a_different_tender(client, pm_user, tender_with_boq, engine):
+    line = BoqLine(
+        source_line_id=1,
+        page_number=1,
+        section=None,
+        category_code=None,
+        description="Supply of rebar-12mm reinforcement steel",
+        unit_raw="t",
+        unit_canonical="t",
+        unit_status="mapped",
+        qty=Decimal("10"),
+        line_type="normal",
+        spec_requirements=(),
+        rate=Decimal("850"),
+        amount=Decimal("8500"),
+    )
+    async with engine.begin() as conn:
+        other_raw_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="event_details",
+            identity_key="test-decision-api-other-tender-2",
+            raw_body=b'{"id": 44}',
+            contract_version="v1",
+            correlation_id="test-decision-api-other-2",
+        )
+        other_tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-decision-api-other-tender-2")
+        other_version = await create_normalized_version(
+            conn,
+            tender_id=other_tender_id,
+            raw_snapshot_id=other_raw_snapshot_id,
+            parser_version="v1",
+            normalized_fields={"id": 44},
+        )
+        await store_boq_lines(
+            conn,
+            source="etender",
+            event_id=44,
+            tender_version_id=other_version.id,
+            raw_snapshot_id=other_raw_snapshot_id,
+            lines=[line],
+        )
+
+    candidate_response = await client.get(
+        f"/tenders/{other_tender_id}/bid-readiness-candidate",
+        params={"as_of": "2026-08-08T00:00:00Z"},
+        headers={"X-Dev-User": "pm-1"},
+    )
+    other_candidate_id = candidate_response.json()["id"]
+
+    response = await client.post(
+        f"/tenders/{tender_with_boq}/decisions",
+        json={
+            "decision_type": "bid",
+            "conditions": [],
+            "justification": "cross-tender reference attempt",
+            "bid_readiness_candidate_id": other_candidate_id,
+        },
+        headers={"Idempotency-Key": "k-c2-decision-2", "X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_reference"
+
+    async with engine.begin() as conn:
+        count = (
+            await conn.execute(text("SELECT count(*) FROM decisions WHERE tender_id = :tid"), {"tid": tender_with_boq})
+        ).scalar_one()
+    assert count == 0

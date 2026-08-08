@@ -63,7 +63,15 @@ async def store_boq_lines(
     return len(lines)
 
 
-async def list_boq_lines_by_tender_version(conn: AsyncConnection, *, tender_version_id: int) -> list[BoqLine]:
+async def list_boq_lines_by_event(conn: AsyncConnection, *, source: str, event_id: int) -> list[BoqLine]:
+    """Queries the real BOQ aggregate key (source, event_id) --
+    boq_lines_event_idx -- rather than a single tender_version_id: a real
+    tender's BOQ is ingested one page at a time, each page landing under its
+    own tender_version (see etender_connector.py's ingest_bom_lines_page,
+    whose identity_query_keys include PageNumber), so no single
+    tender_version_id holds a whole tender's lines (Task 4.A Final Review,
+    finding C1). Callers resolve event_id via
+    packages/tender/normalized.py's get_event_id_for_tender."""
     rows = (
         (
             await conn.execute(
@@ -71,10 +79,11 @@ async def list_boq_lines_by_tender_version(conn: AsyncConnection, *, tender_vers
                     """
                     SELECT page_number, source_line_id, section, category_code, description, unit_raw,
                            unit_canonical, unit_status, qty, line_type, spec_requirements, rate, amount
-                    FROM boq_lines WHERE tender_version_id = :tender_version_id ORDER BY source_line_id
+                    FROM boq_lines WHERE source = :source AND event_id = :event_id
+                    ORDER BY page_number, source_line_id
                     """
                 ),
-                {"tender_version_id": tender_version_id},
+                {"source": source, "event_id": event_id},
             )
         )
         .mappings()
