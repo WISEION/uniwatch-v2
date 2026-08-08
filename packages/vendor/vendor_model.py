@@ -4,12 +4,18 @@ shape as packages/tender/signal_model.py.
 
 `data_realm`/`watermark` are explicit fields on every Vendor/Offer, never
 inferred -- INV-11's "no hidden fallback/synthetic state" applies here
-exactly as it does to tender signals. Every instance this phase's code
-constructs is `data_realm="vendor-sandbox"`/`watermark="SYNTHETIC"` --
-`vendor-production`/`REAL` exist as valid values (matching the database
-CHECK constraint) but nothing in this codebase produces them yet; real
-vendor onboarding is a separate legal/privacy/security gate, out of scope
-here."""
+exactly as it does to tender signals. `SyntheticProvider`/`CsvProvider`
+hardcode `data_realm="vendor-sandbox"`/`watermark="SYNTHETIC"` -- they are
+structurally incapable of anything else (ADR-0004). `NapkinOcrProvider`
+(task 3.A, real napkin ingestion) is the one exception: Phase 3's own
+explicit deviation (TENDER_INTELLIGENCE_SPEC.md §6 header note,
+2026-08-04) moves real ingestion of ALREADY-KNOWN existing vendors into
+Phase 3 without a separate legal gate, so that provider requires the
+caller to state `data_realm`/`watermark` explicitly per capture rather
+than hardcoding either -- see napkin_provider.py. No code path in this
+session has actually invoked it with `vendor-production`/`REAL` (no real
+vendor photo has been supplied yet); this is a proven capability, not a
+claim that real data exists anywhere in this codebase today."""
 
 from __future__ import annotations
 

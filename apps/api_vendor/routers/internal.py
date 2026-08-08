@@ -18,6 +18,13 @@ computed `effective_executable_status`, never collapsing the two into one
 field -- a caller that only wants the raw fact should never be forced to
 also swallow the reputation weighting, and vice versa.
 
+Cursor pagination (FR-PLT-05, packages/platform/pagination.py): `cursor`/
+`limit` follow the same opaque-cursor-by-id convention as
+apps/api_tender/routers/admin_users.py's `list_users` -- CLAUDE.md's rule
+to apply pagination.py to any new listing endpoint, closed here (was
+previously unbounded, recorded as a deferred gap in
+docs/decisions/OPEN-QUESTIONS.md, 2026-08-06).
+
 Deliberately UNAUTHENTICATED, same gap as /internal/ping: real
 service-to-service auth is deferred by ADR-0006 to the still-open
 D-IDP/D-HOST decisions -- recorded in docs/decisions/OPEN-QUESTIONS.md, not
@@ -37,6 +44,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from packages.platform.pagination import decode_cursor, encode_cursor
 from packages.vendor.availability_model import effective_executable_status
 from packages.vendor.reputation_model import NEGATIVE_EVENT_TYPES, POSITIVE_EVENT_TYPES
 from packages.vendor.reputation_store import list_active_reputation_facts
@@ -85,19 +93,26 @@ class InternalOfferResponse(BaseModel):
 
 class InternalOfferListResponse(BaseModel):
     items: list[InternalOfferResponse]
+    next_cursor: str | None = None
 
 
 @router.get("/internal/offers", response_model=InternalOfferListResponse)
 async def list_internal_offers(
     data_realm: str,
     as_of: datetime,
+    cursor: str | None = None,
+    limit: int = 100,
     conn: AsyncConnection = Depends(get_connection),
 ) -> InternalOfferListResponse:
-    rows = await list_offers_with_vendor_name_by_data_realm(conn, data_realm=data_realm)
+    after_id = decode_cursor(cursor)[0] if cursor else 0
+    rows = await list_offers_with_vendor_name_by_data_realm(conn, data_realm=data_realm, after_id=after_id, limit=limit)
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = encode_cursor((page[-1]["id"],)) if has_more else None
     reputation_cache: dict[int, tuple[bool, bool]] = {}
     items: list[InternalOfferResponse] = []
     as_of_iso = as_of.isoformat()
-    for row in rows:
+    for row in page:
         vendor_id = row["vendor_id"]
         if vendor_id not in reputation_cache:
             facts = await list_active_reputation_facts(conn, vendor_id=vendor_id, as_of=as_of_iso)
@@ -116,4 +131,4 @@ async def list_internal_offers(
                 has_negative_reputation=has_negative,
             )
         )
-    return InternalOfferListResponse(items=items)
+    return InternalOfferListResponse(items=items, next_cursor=next_cursor)

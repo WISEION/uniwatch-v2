@@ -94,33 +94,30 @@ class VendorOfferDTO(BaseModel):
 
 class _VendorOfferListPayload(BaseModel):
     items: list[VendorOfferDTO]
+    next_cursor: str | None = None
 
 
-async def list_vendor_offers(
+async def _fetch_offers_page(
+    http_client: httpx.AsyncClient,
     base_url: str,
     *,
     data_realm: str,
     as_of: str,
-    correlation_id: str | None = None,
-    client: httpx.AsyncClient | None = None,
-) -> list[VendorOfferDTO]:
-    resolved_correlation_id = correlation_id or get_correlation_id_or_none()
-    headers = {CORRELATION_ID_HEADER: resolved_correlation_id} if resolved_correlation_id else {}
-
-    owns_client = client is None
-    http_client = client or httpx.AsyncClient()
+    cursor: str | None,
+    headers: dict[str, str],
+) -> _VendorOfferListPayload:
+    params = {"data_realm": data_realm, "as_of": as_of}
+    if cursor is not None:
+        params["cursor"] = cursor
     try:
         response = await http_client.get(
             f"{base_url}/internal/offers",
-            params={"data_realm": data_realm, "as_of": as_of},
+            params=params,
             headers=headers,
             timeout=10.0,
         )
     except httpx.HTTPError as exc:
         raise VendorApiError(f"vendor service unreachable: {exc}") from exc
-    finally:
-        if owns_client:
-            await http_client.aclose()
 
     if response.status_code != 200:
         raise VendorApiError(f"vendor service returned status {response.status_code}: {response.text}")
@@ -131,6 +128,40 @@ async def list_vendor_offers(
         raise VendorApiError(f"vendor service returned non-JSON response: {exc}") from exc
 
     try:
-        return _VendorOfferListPayload.model_validate(payload).items
+        return _VendorOfferListPayload.model_validate(payload)
     except ValidationError as exc:
         raise VendorApiError(f"vendor service response does not match contract: {exc}") from exc
+
+
+async def list_vendor_offers(
+    base_url: str,
+    *,
+    data_realm: str,
+    as_of: str,
+    correlation_id: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> list[VendorOfferDTO]:
+    """Follows every cursor page the vendor service reports (FR-PLT-05) and
+    returns the concatenated result -- the caller (packages/decision's
+    matching, task 3.D) needs the full offer set for a data_realm, not a
+    single page, so pagination is handled here rather than pushed onto
+    every caller."""
+    resolved_correlation_id = correlation_id or get_correlation_id_or_none()
+    headers = {CORRELATION_ID_HEADER: resolved_correlation_id} if resolved_correlation_id else {}
+
+    owns_client = client is None
+    http_client = client or httpx.AsyncClient()
+    try:
+        items: list[VendorOfferDTO] = []
+        cursor: str | None = None
+        while True:
+            page = await _fetch_offers_page(
+                http_client, base_url, data_realm=data_realm, as_of=as_of, cursor=cursor, headers=headers
+            )
+            items.extend(page.items)
+            if page.next_cursor is None:
+                return items
+            cursor = page.next_cursor
+    finally:
+        if owns_client:
+            await http_client.aclose()

@@ -132,10 +132,17 @@ async def list_offers_by_vendor(conn: AsyncConnection, *, vendor_id: int) -> lis
     return [dict(row) for row in rows]
 
 
-async def list_offers_with_vendor_name_by_data_realm(conn: AsyncConnection, *, data_realm: str) -> list[dict[str, Any]]:
+async def list_offers_with_vendor_name_by_data_realm(
+    conn: AsyncConnection, *, data_realm: str, after_id: int = 0, limit: int = 100
+) -> list[dict[str, Any]]:
     """Same shape as list_offers_by_data_realm, plus vendor_name -- lets a
     caller outside this service (packages/decision, via the internal
-    offers endpoint) resolve vendor identity in one round trip."""
+    offers endpoint) resolve vendor identity in one round trip.
+
+    Opaque cursor pagination (FR-PLT-05, packages/platform/pagination.py's
+    convention): `after_id`/`limit` fetch limit+1 rows by id order so the
+    caller can tell whether another page exists without a separate COUNT
+    query."""
     rows = (
         (
             await conn.execute(
@@ -147,11 +154,12 @@ async def list_offers_with_vendor_name_by_data_realm(conn: AsyncConnection, *, d
                            o.executable_status
                     FROM vendor_offers o
                     JOIN vendors v ON v.id = o.vendor_id
-                    WHERE o.data_realm = :data_realm
+                    WHERE o.data_realm = :data_realm AND o.id > :after_id
                     ORDER BY o.id
+                    LIMIT :limit_plus_one
                     """
                 ),
-                {"data_realm": data_realm},
+                {"data_realm": data_realm, "after_id": after_id, "limit_plus_one": limit + 1},
             )
         )
         .mappings()

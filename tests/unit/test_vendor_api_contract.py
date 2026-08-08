@@ -12,6 +12,32 @@ import pytest
 from packages.contracts.vendor_api import VendorApiError, VendorPingResponse, list_vendor_offers, ping_vendor_service
 from packages.platform.correlation import bind_correlation_id
 
+_OFFER_FIXTURE = {
+    "id": 1,
+    "vendor_id": 7,
+    "vendor_name": "Reliable Vendor",
+    "data_realm": "vendor-sandbox",
+    "watermark": "SYNTHETIC",
+    "material": "cement M400",
+    "price": 120.0,
+    "currency": "AZN",
+    "vat_rate": 0.18,
+    "uom": "t",
+    "uom_canonical_qty": 1.0,
+    "moq": 1.0,
+    "capacity": 100.0,
+    "inventory": 40.0,
+    "valid_from": "2026-08-01T00:00:00+00:00",
+    "valid_until": "2026-09-01T00:00:00+00:00",
+    "evidence_source": "test",
+    "observed_at": "2026-08-06T00:00:00+00:00",
+    "adverse_case": None,
+    "executable_status": "reserved",
+    "effective_executable_status": "reserved",
+    "has_positive_reputation": True,
+    "has_negative_reputation": False,
+}
+
 
 async def test_ping_vendor_service_returns_parsed_response():
     def handler(request: httpx.Request) -> httpx.Response:
@@ -145,6 +171,32 @@ async def test_list_vendor_offers_sends_query_params():
 
     assert captured["data_realm"] == "vendor-sandbox"
     assert captured["as_of"] == "2026-08-06T00:00:00+00:00"
+
+
+async def test_list_vendor_offers_follows_cursor_pages_and_concatenates_items():
+    page1 = {
+        "items": [{**_OFFER_FIXTURE, "id": 1}],
+        "next_cursor": "opaque-cursor-1",
+    }
+    page2 = {
+        "items": [{**_OFFER_FIXTURE, "id": 2}],
+        "next_cursor": None,
+    }
+    requested_cursors: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = request.url.params.get("cursor")
+        requested_cursors.append(cursor)
+        return httpx.Response(200, json=page1 if cursor is None else page2)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, base_url="http://vendor-test") as client:
+        result = await list_vendor_offers(
+            "http://vendor-test", data_realm="vendor-sandbox", as_of="2026-08-06T00:00:00+00:00", client=client
+        )
+
+    assert [r.id for r in result] == [1, 2]
+    assert requested_cursors == [None, "opaque-cursor-1"]
 
 
 async def test_list_vendor_offers_raises_typed_error_on_non_200():
