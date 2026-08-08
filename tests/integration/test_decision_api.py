@@ -83,6 +83,16 @@ async def pm_user(engine):
 
 
 @pytest_asyncio.fixture
+async def user_without_decision_permissions(engine):
+    async with engine.begin() as conn:
+        role_id = (await conn.execute(text("INSERT INTO roles (name) VALUES ('no-decision-perms') RETURNING id"))).scalar()
+        await conn.execute(
+            text("INSERT INTO users (username, display_name, role_id) VALUES ('no-perms-1', 'No Perms', :r)"), {"r": role_id}
+        )
+    return "no-perms-1"
+
+
+@pytest_asyncio.fixture
 async def tender_with_boq(engine):
     line = BoqLine(
         source_line_id=1,
@@ -303,6 +313,28 @@ async def test_decision_with_bid_generates_lock_in_requirements(client, pm_user,
     assert body["lock_in_requirements"][0]["vendor_name"] == "Sole Vendor"
     assert body["lock_in_requirements"][0]["status"] == "pending"
 
+    # The response's "status": "pending" is a hardcoded literal in the
+    # router, not read back from the DB -- confirm a real row was persisted,
+    # not just echoed in the HTTP response.
+    async with engine.begin() as conn:
+        row = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT decision_id, boqline_source_line_id, vendor_id, vendor_name, status "
+                        "FROM lock_in_requirements WHERE tender_id = :tid"
+                    ),
+                    {"tid": tender_with_boq},
+                )
+            )
+            .mappings()
+            .first()
+        )
+    assert row is not None
+    assert row["vendor_name"] == "Sole Vendor"
+    assert row["decision_id"] == body["id"]
+    assert row["status"] == "pending"
+
 
 async def test_decision_rejects_unknown_decision_type(client, pm_user, tender_with_boq):
     response = await client.post(
@@ -313,11 +345,167 @@ async def test_decision_rejects_unknown_decision_type(client, pm_user, tender_wi
     assert response.status_code == 422
 
 
-async def test_decision_without_bid_type_does_not_generate_lock_ins(client, pm_user, tender_with_boq):
+async def test_decision_without_bid_type_does_not_generate_lock_ins(client, pm_user, tender_with_boq, engine):
+    # Regression guard: the router's guard is
+    # `decision_type in ("bid", "conditional_bid") AND bid_readiness_candidate_id is not None`
+    # -- either half being false makes lock-in generation skip, so this test
+    # must supply a REAL candidate that DOES have a critical line, proving
+    # the decision_type ("no_go") is what suppresses lock-ins, not a missing
+    # candidate id.
+    async with engine.begin() as conn:
+        vendor = Vendor(data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Sole Vendor", provider_type="synthetic", seed=9)
+        vendor_id, _api_key = await store_vendor(conn, vendor)
+        offer = Offer(
+            vendor_name="Sole Vendor",
+            data_realm="vendor-sandbox",
+            watermark="SYNTHETIC",
+            material="rebar-12mm",
+            price=850.0,
+            currency="AZN",
+            vat_rate=18.0,
+            uom="t",
+            uom_canonical_qty=1.0,
+            moq=1.0,
+            capacity=100.0,
+            inventory=50.0,
+            valid_from="2026-08-01T00:00:00+00:00",
+            valid_until="2026-09-01T00:00:00+00:00",
+            evidence_source="test",
+            observed_at="2026-08-01T00:00:00+00:00",
+            adverse_case=None,
+            executable_status="reserved",
+        )
+        await store_offer(conn, vendor_id, offer)
+
+    candidate_response = await client.get(
+        f"/tenders/{tender_with_boq}/bid-readiness-candidate",
+        params={"as_of": "2026-08-08T00:00:00Z"},
+        headers={"X-Dev-User": "pm-1"},
+    )
+    candidate_id = candidate_response.json()["id"]
+    assert len(candidate_response.json()["critical_lines"]) == 1  # confirms this candidate DOES have a critical line
+
     response = await client.post(
         f"/tenders/{tender_with_boq}/decisions",
-        json={"decision_type": "no_go", "conditions": [], "justification": "qualification stop"},
+        json={
+            "decision_type": "no_go",
+            "conditions": [],
+            "justification": "qualification stop",
+            "bid_readiness_candidate_id": candidate_id,
+        },
         headers={"Idempotency-Key": "k-decision-3", "X-Dev-User": "pm-1"},
     )
     assert response.status_code == 201
     assert response.json()["lock_in_requirements"] == []
+
+
+async def test_bid_readiness_candidate_rejects_naive_as_of(client, pm_user, tender_with_boq):
+    response = await client.get(
+        f"/tenders/{tender_with_boq}/bid-readiness-candidate",
+        params={"as_of": "2026-08-08T00:00:00"},
+        headers={"X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "naive_datetime"
+
+
+async def test_go_no_go_inputs_with_nonexistent_tender_returns_422(client, pm_user):
+    response = await client.post(
+        "/tenders/999999999/go-no-go-inputs",
+        json={
+            "company_profile_notes": "x",
+            "qualification_notes": "x",
+            "financing_notes": "x",
+            "customer_reputation_notes": "x",
+            "pre_designated_winner_suspected": False,
+        },
+        headers={"Idempotency-Key": "k-nonexistent-tender", "X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_reference"
+
+
+async def test_mutations_write_audit_log_entries(client, pm_user, tender_with_boq, engine):
+    go_no_go_response = await client.post(
+        f"/tenders/{tender_with_boq}/go-no-go-inputs",
+        json={
+            "company_profile_notes": "x",
+            "qualification_notes": "x",
+            "financing_notes": "x",
+            "customer_reputation_notes": "x",
+            "pre_designated_winner_suspected": False,
+        },
+        headers={"Idempotency-Key": "k-audit-go-no-go", "X-Dev-User": "pm-1"},
+    )
+    decision_response = await client.post(
+        f"/tenders/{tender_with_boq}/decisions",
+        json={"decision_type": "no_go", "conditions": [], "justification": "audit trail check"},
+        headers={"Idempotency-Key": "k-audit-decision", "X-Dev-User": "pm-1"},
+    )
+
+    async with engine.begin() as conn:
+        rows = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT actor, action, object_type, object_id, reason FROM audit_log "
+                        "WHERE action IN ('go_no_go_inputs.create', 'decision.create') ORDER BY id"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert len(rows) == 2
+    assert rows[0]["actor"] == "pm-1"
+    assert rows[0]["action"] == "go_no_go_inputs.create"
+    assert rows[0]["object_id"] == str(go_no_go_response.json()["id"])
+    assert rows[1]["action"] == "decision.create"
+    assert rows[1]["object_id"] == str(decision_response.json()["id"])
+    assert rows[1]["reason"] == "audit trail check"
+
+
+async def test_go_no_go_inputs_replay_with_same_idempotency_key_returns_same_response(client, pm_user, tender_with_boq, engine):
+    payload = {
+        "company_profile_notes": "20 years in market",
+        "qualification_notes": "licenses current",
+        "financing_notes": "bond available",
+        "customer_reputation_notes": "pays on time",
+        "pre_designated_winner_suspected": False,
+    }
+    first = await client.post(
+        f"/tenders/{tender_with_boq}/go-no-go-inputs",
+        json=payload,
+        headers={"Idempotency-Key": "k-replay-test", "X-Dev-User": "pm-1"},
+    )
+    second = await client.post(
+        f"/tenders/{tender_with_boq}/go-no-go-inputs",
+        json=payload,
+        headers={"Idempotency-Key": "k-replay-test", "X-Dev-User": "pm-1"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json() == second.json()
+
+    async with engine.begin() as conn:
+        count = (
+            await conn.execute(text("SELECT count(*) FROM go_no_go_inputs WHERE tender_id = :tid"), {"tid": tender_with_boq})
+        ).scalar_one()
+    assert count == 1
+
+
+async def test_go_no_go_inputs_without_permission_is_403(client, user_without_decision_permissions, tender_with_boq):
+    response = await client.post(
+        f"/tenders/{tender_with_boq}/go-no-go-inputs",
+        json={
+            "company_profile_notes": "x",
+            "qualification_notes": "x",
+            "financing_notes": "x",
+            "customer_reputation_notes": "x",
+            "pre_designated_winner_suspected": False,
+        },
+        headers={"Idempotency-Key": "k-403-test", "X-Dev-User": "no-perms-1"},
+    )
+    assert response.status_code == 403
