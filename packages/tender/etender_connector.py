@@ -42,7 +42,12 @@ from .schema_drift import SchemaDriftDetected, detect_schema_drift, detect_schem
 from .signals_store import store_signal
 from .source_contract import SourceContract, canonical_identity
 
-PARSER_VERSION = "etender-v1"
+PARSER_VERSION = "etender-v2"
+# v2 (Task 4.A Final Review, finding C1 fix): ingest_event_details's
+# normalized_fields gained "id" -- the layer-2 output shape changed,
+# so ADR-0003's parser_version discipline requires a bump even though
+# ingest_bom_lines_page/ingest_events_list_page, which share this constant,
+# did not change shape themselves.
 
 
 async def _ingest(

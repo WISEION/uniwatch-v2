@@ -160,8 +160,12 @@ async def test_list_boq_lines_by_event_aggregates_across_multiple_tender_version
     The real aggregate is (source, event_id), independent of tender_version_id
     -- this proves list_boq_lines_by_event returns lines stored under two
     different tender_version_ids as long as they share one event_id."""
+    # source_line_id is deliberately NOT in page order (page 1's line has the
+    # higher id) -- if list_boq_lines_by_event ever regressed to ordering by
+    # source_line_id alone, this would return [page 2's line, page 1's line]
+    # and the assertion below would catch it.
     line_page_1 = BoqLine(
-        source_line_id=1,
+        source_line_id=500,
         page_number=1,
         section=None,
         category_code=None,
@@ -176,7 +180,7 @@ async def test_list_boq_lines_by_event_aggregates_across_multiple_tender_version
         amount=None,
     )
     line_page_2 = BoqLine(
-        source_line_id=2,
+        source_line_id=100,
         page_number=2,
         section=None,
         category_code=None,
@@ -243,4 +247,4 @@ async def test_list_boq_lines_by_event_aggregates_across_multiple_tender_version
 
         result = await list_boq_lines_by_event(conn, source="etender", event_id=999002)
 
-    assert [r.source_line_id for r in result] == [1, 2]
+    assert [r.source_line_id for r in result] == [500, 100]

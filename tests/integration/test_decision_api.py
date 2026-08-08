@@ -301,6 +301,7 @@ async def test_decision_with_bid_generates_lock_in_requirements(client, pm_user,
         params={"as_of": "2026-08-08T00:00:00Z"},
         headers={"X-Dev-User": "pm-1"},
     )
+    assert candidate_response.status_code == 200
     candidate_id = candidate_response.json()["id"]
 
     decision_response = await client.post(
@@ -390,6 +391,7 @@ async def test_decision_without_bid_type_does_not_generate_lock_ins(client, pm_u
         params={"as_of": "2026-08-08T00:00:00Z"},
         headers={"X-Dev-User": "pm-1"},
     )
+    assert candidate_response.status_code == 200
     candidate_id = candidate_response.json()["id"]
     assert len(candidate_response.json()["critical_lines"]) == 1  # confirms this candidate DOES have a critical line
 
@@ -714,6 +716,7 @@ async def test_decision_rejects_bid_readiness_candidate_from_a_different_tender(
         params={"as_of": "2026-08-08T00:00:00Z"},
         headers={"X-Dev-User": "pm-1"},
     )
+    assert candidate_response.status_code == 200
     other_candidate_id = candidate_response.json()["id"]
 
     response = await client.post(
@@ -734,3 +737,51 @@ async def test_decision_rejects_bid_readiness_candidate_from_a_different_tender(
             await conn.execute(text("SELECT count(*) FROM decisions WHERE tender_id = :tid"), {"tid": tender_with_boq})
         ).scalar_one()
     assert count == 0
+
+
+async def test_decision_with_bid_type_and_no_candidate_id_generates_no_lock_ins(client, pm_user, tender_with_boq):
+    # Regression guard for the lock-in block's guard, simplified during the
+    # C2 fix to `candidate_row is not None` -- a bid decision that never
+    # supplied a bid_readiness_candidate_id at all must still generate zero
+    # lock-ins, not crash on a None candidate_row.
+    response = await client.post(
+        f"/tenders/{tender_with_boq}/decisions",
+        json={
+            "decision_type": "bid",
+            "conditions": [],
+            "justification": "bid decided without a computed candidate",
+        },
+        headers={"Idempotency-Key": "k-bid-no-candidate", "X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 201
+    assert response.json()["lock_in_requirements"] == []
+
+
+async def test_decision_rejects_nonexistent_go_no_go_inputs_id(client, pm_user, tender_with_boq):
+    response = await client.post(
+        f"/tenders/{tender_with_boq}/decisions",
+        json={
+            "decision_type": "no_go",
+            "conditions": [],
+            "justification": "x",
+            "go_no_go_inputs_id": 999999999,
+        },
+        headers={"Idempotency-Key": "k-nonexistent-go-no-go", "X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_reference"
+
+
+async def test_decision_rejects_nonexistent_bid_readiness_candidate_id(client, pm_user, tender_with_boq):
+    response = await client.post(
+        f"/tenders/{tender_with_boq}/decisions",
+        json={
+            "decision_type": "bid",
+            "conditions": [],
+            "justification": "x",
+            "bid_readiness_candidate_id": 999999999,
+        },
+        headers={"Idempotency-Key": "k-nonexistent-candidate", "X-Dev-User": "pm-1"},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_reference"

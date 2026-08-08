@@ -296,14 +296,9 @@ async def create_decision(
     try:
         decision_id = await store_decision(conn, decision)
     except IntegrityError as exc:
-        raise ApiError(
-            status_code=422,
-            code="invalid_reference",
-            message=(
-                f"tender {tender_id}, go_no_go_inputs_id {body.go_no_go_inputs_id}, "
-                f"or bid_readiness_candidate_id {body.bid_readiness_candidate_id} does not exist"
-            ),
-        ) from exc
+        # go_no_go_inputs_id/bid_readiness_candidate_id are already validated
+        # above -- only a nonexistent tender_id itself can still reach this.
+        raise ApiError(status_code=422, code="invalid_reference", message=f"tender {tender_id} does not exist") from exc
     await write_audit_log(
         conn,
         actor=identity.subject,
