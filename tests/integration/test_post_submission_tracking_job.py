@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 
-from packages.tender.boq_line_model import BoqLine
-from packages.tender.boq_lines_store import store_boq_lines
+from sqlalchemy import text
+
+from packages.tender.boq_line_model import build_boq_lines
+from packages.tender.boq_lines_store import list_boq_lines_by_event, store_boq_lines
 from packages.tender.change_tracking_store import get_watch_state, list_unresolved_recalc_flags
 from packages.tender.etender_connector import ingest_bom_lines_page, ingest_event_details
 from packages.tender.normalized import get_or_create_tender
@@ -108,7 +110,18 @@ async def test_no_change_detected_when_refetch_is_identical(engine):
 
     async with engine.begin() as conn:
         watch_state = await get_watch_state(conn, tender_id=tender_id)
+        # Direct DB proof (not just the inferred flagged_line_count == 0 /
+        # fetch_bom_page-raises-if-called signals above): a no-op check must
+        # write zero rows to either append-only table.
+        change_event_count = (
+            await conn.execute(text("SELECT count(*) FROM tender_change_events WHERE tender_id = :tid"), {"tid": tender_id})
+        ).scalar_one()
+        recalc_flag_count = (
+            await conn.execute(text("SELECT count(*) FROM boq_line_recalc_flags WHERE tender_id = :tid"), {"tid": tender_id})
+        ).scalar_one()
     assert watch_state == "2026-08-09T12:00:00+00:00"
+    assert change_event_count == 0
+    assert recalc_flag_count == 0
 
 
 async def test_deadline_shift_detected_and_recorded(engine):
@@ -141,6 +154,65 @@ async def test_deadline_shift_detected_and_recorded(engine):
     assert result["change_type"] == "deadline_shift"
 
 
+async def test_schema_drift_on_refetch_is_queued_not_raised(engine):
+    event_id = 700004
+    async with engine.begin() as conn:
+        await ingest_event_details(
+            conn, raw_body=b"{}", payload=_details_payload(event_id, end_date=1788354059), correlation_id="test-4b-job-4"
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key=f"etender.event_details|id={event_id}")
+
+    async def fetch_event_details(eid):
+        # Missing tenderName/organizationName/documentNumber -- all
+        # non-optional in EVENT_DETAILS_CONTRACT, so this is real schema
+        # drift (a source dropping fields), not a legitimate field change.
+        payload = _details_payload(event_id, end_date=1788354059)
+        del payload["tenderName"]
+        del payload["organizationName"]
+        del payload["documentNumber"]
+        return json.dumps(payload).encode("utf-8"), payload
+
+    async def fetch_bom_page(eid, page_number):
+        raise AssertionError("must not be called -- drift blocks normalization before any diff/re-walk")
+
+    async with engine.begin() as conn:
+        result = await check_tender_for_changes(
+            conn,
+            tender_id=tender_id,
+            fetch_event_details=fetch_event_details,
+            fetch_bom_page=fetch_bom_page,
+            correlation_id="test-4b-job-4",
+            observed_at="2026-08-09T12:00:00+00:00",
+        )
+
+    assert result == {"change_detected": False, "change_type": None, "flagged_line_count": 0}
+
+    async with engine.begin() as conn:
+        watch_state = await get_watch_state(conn, tender_id=tender_id)
+        exception_rows = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT source, exception_type, category, status FROM exception_queue "
+                        "WHERE correlation_id = :correlation_id"
+                    ),
+                    {"correlation_id": "test-4b-job-4"},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    # Watch state still advances -- a source-side drift must not cause this
+    # tender to be immediately re-enqueued on the very next poll cycle.
+    assert watch_state == "2026-08-09T12:00:00+00:00"
+    assert len(exception_rows) == 1
+    assert exception_rows[0]["source"] == "etender"
+    assert exception_rows[0]["exception_type"] == "schema_drift"
+    assert exception_rows[0]["category"] == "needs_human"
+    assert exception_rows[0]["status"] == "open"
+
+
 async def test_boq_line_change_is_flagged_without_mutating_boq_lines(engine):
     event_id = 700003
     async with engine.begin() as conn:
@@ -158,21 +230,13 @@ async def test_boq_line_change_is_flagged_without_mutating_boq_lines(engine):
             payload=_bom_page_payload(event_id, 1, 1, [_bom_item(501, qty=10.0)]),
             correlation_id="test-4b-job-3",
         )
-        line = BoqLine(
-            source_line_id=501,
-            page_number=1,
-            section=None,
-            category_code=None,
-            description="rebar-12mm",
-            unit_raw="t",
-            unit_canonical="t",
-            unit_status="mapped",
-            qty=Decimal("10"),
-            line_type="normal",
-            spec_requirements=(),
-            rate=Decimal("850"),
-            amount=Decimal("8500"),
-        )
+        # Built through the SAME build_boq_lines pipeline used below for the
+        # "new" re-fetched line (not a hand-constructed BoqLine with its own
+        # rate/amount values) -- otherwise old.rate/old.amount would differ
+        # from new.rate/new.amount (both None, since _bom_item carries no
+        # rate/amount key) for reasons unrelated to the qty change under
+        # test, over-determining which field triggered the flag.
+        [line] = build_boq_lines(page_number=1, items=[_bom_item(501, qty=10.0)])
         await store_boq_lines(
             conn,
             source="etender",
@@ -207,8 +271,6 @@ async def test_boq_line_change_is_flagged_without_mutating_boq_lines(engine):
         flags = await list_unresolved_recalc_flags(conn, tender_id=tender_id)
         # boq_lines itself must be untouched -- still exactly the ORIGINAL
         # qty=10, never overwritten by the live re-fetch's qty=15.
-        from packages.tender.boq_lines_store import list_boq_lines_by_event
-
         stored_lines = await list_boq_lines_by_event(conn, source="etender", event_id=event_id)
 
     assert [f["boqline_source_line_id"] for f in flags] == [501]
