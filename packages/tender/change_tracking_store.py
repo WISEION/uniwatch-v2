@@ -120,3 +120,24 @@ async def upsert_watch_state(conn: AsyncConnection, *, tender_id: int, checked_a
         ),
         {"tender_id": tender_id, "checked_at": datetime.fromisoformat(checked_at)},
     )
+
+
+async def list_tenders_due_for_check(conn: AsyncConnection, *, tender_ids: list[int], now: str, interval_hours: int) -> list[int]:
+    if not tender_ids:
+        return []
+    rows = (
+        await conn.execute(
+            text(
+                """
+                SELECT t.id AS tender_id
+                FROM unnest(CAST(:tender_ids AS bigint[])) AS t(id)
+                LEFT JOIN tender_watch_state w ON w.tender_id = t.id
+                WHERE w.last_checked_at IS NULL
+                   OR w.last_checked_at <= CAST(:now AS timestamptz) - make_interval(hours => :interval_hours)
+                ORDER BY t.id
+                """
+            ),
+            {"tender_ids": tender_ids, "now": datetime.fromisoformat(now), "interval_hours": interval_hours},
+        )
+    ).all()
+    return [row[0] for row in rows]

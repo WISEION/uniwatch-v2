@@ -4,6 +4,7 @@ from sqlalchemy import text
 
 from packages.tender.change_tracking_store import (
     get_watch_state,
+    list_tenders_due_for_check,
     list_unresolved_recalc_flags,
     store_boq_line_recalc_flag,
     store_tender_change_event,
@@ -123,3 +124,26 @@ async def test_list_unresolved_recalc_flags_excludes_a_resolved_flag(engine):
         flags = await list_unresolved_recalc_flags(conn, tender_id=tender_id)
 
     assert flags == []
+
+
+async def test_list_tenders_due_for_check_includes_a_never_checked_tender(engine):
+    async with engine.begin() as conn:
+        tender_id, _snap = await _make_tender(conn, "test-4b-due-1")
+        result = await list_tenders_due_for_check(conn, tender_ids=[tender_id], now="2026-08-09T12:00:00+00:00", interval_hours=6)
+    assert result == [tender_id]
+
+
+async def test_list_tenders_due_for_check_excludes_a_recently_checked_tender(engine):
+    async with engine.begin() as conn:
+        tender_id, _snap = await _make_tender(conn, "test-4b-due-2")
+        await upsert_watch_state(conn, tender_id=tender_id, checked_at="2026-08-09T10:00:00+00:00")
+        result = await list_tenders_due_for_check(conn, tender_ids=[tender_id], now="2026-08-09T12:00:00+00:00", interval_hours=6)
+    assert result == []
+
+
+async def test_list_tenders_due_for_check_includes_a_tender_checked_over_the_interval_ago(engine):
+    async with engine.begin() as conn:
+        tender_id, _snap = await _make_tender(conn, "test-4b-due-3")
+        await upsert_watch_state(conn, tender_id=tender_id, checked_at="2026-08-09T00:00:00+00:00")
+        result = await list_tenders_due_for_check(conn, tender_ids=[tender_id], now="2026-08-09T12:00:00+00:00", interval_hours=6)
+    assert result == [tender_id]

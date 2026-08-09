@@ -12,6 +12,7 @@ from packages.decision.boq_summary import BoqMatchSummary
 from packages.decision.decision_model import Decision, GoNoGoInputs
 from packages.decision.decision_store import (
     list_lock_in_requirements_by_tender,
+    list_tenders_with_active_bid_decision,
     load_bid_readiness_candidate,
     store_bid_readiness_candidate,
     store_decision,
@@ -132,3 +133,46 @@ async def test_lock_in_requirements_round_trip_by_tender(engine):
     assert len(lock_ins) == 1
     assert lock_ins[0]["status"] == "pending"
     assert lock_ins[0]["vendor_name"] == "Vendor A"
+
+
+def _decision(tender_id: int, decision_type: str, decided_at: str) -> Decision:
+    return Decision(
+        tender_id=tender_id,
+        decision_type=decision_type,
+        conditions=(),
+        deadline=None,
+        justification="test",
+        actor="pm-1",
+        decided_at=decided_at,
+        go_no_go_inputs_id=None,
+        bid_readiness_candidate_id=None,
+    )
+
+
+async def test_list_tenders_with_active_bid_decision_returns_bid_and_conditional_bid(engine):
+    async with engine.begin() as conn:
+        tender_a = await _make_tender(conn, "test-decision-store-active-a")
+        tender_b = await _make_tender(conn, "test-decision-store-active-b")
+        tender_c = await _make_tender(conn, "test-decision-store-active-c")
+        await store_decision(conn, _decision(tender_a, "bid", "2026-08-09T00:00:00+00:00"))
+        await store_decision(conn, _decision(tender_b, "conditional_bid", "2026-08-09T00:00:00+00:00"))
+        await store_decision(conn, _decision(tender_c, "no_go", "2026-08-09T00:00:00+00:00"))
+
+        result = await list_tenders_with_active_bid_decision(conn)
+
+    assert tender_a in result
+    assert tender_b in result
+    assert tender_c not in result
+
+
+async def test_list_tenders_with_active_bid_decision_uses_the_most_recent_decision(engine):
+    async with engine.begin() as conn:
+        tender_id = await _make_tender(conn, "test-decision-store-active-superseded")
+        await store_decision(conn, _decision(tender_id, "bid", "2026-08-01T00:00:00+00:00"))
+        # Append-only: a later row records the bid being abandoned. The
+        # LATEST decision by decided_at must win, not the first one stored.
+        await store_decision(conn, _decision(tender_id, "no_go", "2026-08-09T00:00:00+00:00"))
+
+        result = await list_tenders_with_active_bid_decision(conn)
+
+    assert tender_id not in result
