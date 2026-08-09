@@ -7,13 +7,14 @@ no real eTender fetch and no real egress validator."""
 from __future__ import annotations
 
 import json
+import logging
 
 from sqlalchemy import text
 
 import apps.worker.main as worker_main
 from packages.decision.decision_model import Decision
 from packages.decision.decision_store import store_decision
-from packages.platform.jobs import JobIdentity, JobStore
+from packages.platform.jobs import JobIdentity, JobNotOwned, JobStore
 from packages.tender.normalized import create_normalized_version, get_or_create_tender
 from packages.tender.post_submission_tracking_job import JOB_TYPE as TENDER_CHECK_JOB_TYPE
 from packages.tender.raw_snapshot import save_raw_snapshot
@@ -22,7 +23,9 @@ from packages.tender.raw_snapshot import save_raw_snapshot
 async def test_worker_dispatches_a_tender_change_check_job(engine, monkeypatch):
     calls = []
 
-    async def fake_check_tender_for_changes(conn, *, tender_id, fetch_event_details, fetch_bom_page, correlation_id, observed_at):
+    async def fake_check_tender_for_changes(
+        conn, *, tender_id, fetch_event_details, fetch_bom_page, correlation_id, observed_at, heartbeat=None
+    ):
         calls.append(tender_id)
         return {"change_detected": False, "change_type": None, "flagged_line_count": 0}
 
@@ -113,3 +116,40 @@ async def test_enqueue_due_tender_checks_does_not_double_enqueue_a_still_pending
         ).scalar_one()
 
     assert job_count == 1
+
+
+async def test_run_once_does_not_crash_when_the_lease_was_already_reclaimed(engine, monkeypatch, caplog):
+    """Final Review C1 regression test: if a job's lease is stolen by
+    another worker mid-processing (e.g. a heartbeat lost a race, or the
+    lease genuinely expired), `store.fail_retry`'s own `JobNotOwned`
+    bookkeeping exception must NOT escape `_process_claimed_job` -- that
+    would propagate through `run_once` and crash `run_forever`'s entire
+    `while True` loop over what is really just a lease-ownership race, not
+    a fatal worker error. The reclaiming worker owns recording this job's
+    outcome now. Uses an unknown job_type to force the `except Exception`
+    branch cheaply, without needing a real tender_change_check failure."""
+    store = JobStore()
+    async with engine.begin() as conn:
+        await store.enqueue(
+            conn,
+            JobIdentity(
+                job_type="an-unrecognized-job-type-to-force-the-except-branch",
+                params={},
+                source="test",
+                range_start=None,
+                range_end=None,
+                contract_version="v1",
+                correlation_id="test-worker-lease-race",
+            ),
+        )
+
+    async def fake_fail_retry(*args, **kwargs):
+        raise JobNotOwned(job_id=-1, worker_id="some-other-worker")
+
+    monkeypatch.setattr(store, "fail_retry", fake_fail_retry)
+
+    with caplog.at_level(logging.WARNING):
+        claimed = await worker_main.run_once(engine, store, worker_id="test-worker-lease-race")
+
+    assert claimed is True
+    assert any("lease was already reclaimed" in record.message for record in caplog.records)

@@ -24,7 +24,7 @@ from .boq_line_diff import diff_boq_lines
 from .boq_line_model import build_boq_lines
 from .boq_lines_store import list_boq_lines_by_event
 from .change_tracking_store import store_boq_line_recalc_flag, store_tender_change_event, upsert_watch_state
-from .etender_connector import ingest_event_details
+from .etender_connector import ingest_bom_lines_page, ingest_event_details
 from .normalized import get_current_tender_version_id, get_event_id_for_tender
 from .schema_drift import SchemaDriftDetected
 from .tender_change_detection import classify_change_type, diff_normalized_fields
@@ -33,6 +33,7 @@ JOB_TYPE = "tender_change_check"
 
 FetchEventDetails = Callable[[int], Awaitable[tuple[bytes, dict[str, Any]]]]
 FetchBomPage = Callable[[int, int], Awaitable[tuple[bytes, dict[str, Any]]]]
+Heartbeat = Callable[[], Awaitable[None]]
 
 
 async def check_tender_for_changes(
@@ -43,6 +44,7 @@ async def check_tender_for_changes(
     fetch_bom_page: FetchBomPage,
     correlation_id: str,
     observed_at: str,
+    heartbeat: Heartbeat | None = None,
 ) -> dict[str, Any]:
     event_id = await get_event_id_for_tender(conn, tender_id=tender_id)
     if event_id is None:
@@ -65,6 +67,9 @@ async def check_tender_for_changes(
 
     try:
         new_version = await ingest_event_details(conn, raw_body=raw_body, payload=payload, correlation_id=correlation_id)
+        assert new_version.tender_id == tender_id, (
+            f"ingest_event_details resolved a different tender ({new_version.tender_id}) than requested ({tender_id})"
+        )
     except SchemaDriftDetected as drift_exc:
         await enqueue_exception(
             conn,
@@ -98,8 +103,36 @@ async def check_tender_for_changes(
         new_lines = []
         page_number = 1
         while True:
-            _page_raw_body, page_payload = await fetch_bom_page(event_id, page_number)
-            new_lines.extend(build_boq_lines(page_number=page_number, items=page_payload["items"]))
+            if heartbeat is not None:
+                await heartbeat()
+            page_raw_body, page_payload = await fetch_bom_page(event_id, page_number)
+            # Reuses the SAME raw-evidence-capture + schema-drift mechanism
+            # every other bom_lines ingestion in this codebase already goes
+            # through (packages/tender/bom_lines_job.py) -- a re-walked page
+            # is not exempt from ADR-0003 layer-1 evidence capture just
+            # because this is a re-check rather than the first ingestion.
+            # ingest_bom_lines_page does NOT call store_boq_lines (that is a
+            # separate call bom_lines_job.py makes afterward), so calling it
+            # here only writes a raw_snapshot + a new, throwaway page-scoped
+            # tender_version -- it never mutates the persisted boq_lines rows
+            # this diff compares against.
+            try:
+                await ingest_bom_lines_page(
+                    conn, event_id=event_id, raw_body=page_raw_body, payload=page_payload, correlation_id=correlation_id
+                )
+            except SchemaDriftDetected as page_drift_exc:
+                await enqueue_exception(
+                    conn,
+                    source="etender",
+                    exception_type="schema_drift",
+                    category="needs_human",
+                    reason=str(page_drift_exc),
+                    correlation_id=correlation_id,
+                    raw_ref=page_drift_exc.raw_snapshot_id,
+                    contract_name=page_drift_exc.contract_name,
+                )
+            else:
+                new_lines.extend(build_boq_lines(page_number=page_number, items=page_payload["items"]))
             total_pages = page_payload.get("totalPages")
             if total_pages is None or page_number >= total_pages:
                 break

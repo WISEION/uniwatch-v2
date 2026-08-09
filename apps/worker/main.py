@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -16,7 +17,7 @@ from packages.decision.decision_store import list_tenders_with_active_bid_decisi
 from packages.platform.correlation import bind_correlation_id
 from packages.platform.db import get_engine
 from packages.platform.egress.validator import EgressValidator
-from packages.platform.jobs import Job, JobIdentity, JobStore, compute_backoff_seconds
+from packages.platform.jobs import Job, JobIdentity, JobNotOwned, JobStore, compute_backoff_seconds
 from packages.platform.logging import configure_logging
 from packages.platform.settings import get_settings
 from packages.tender import etender_connector
@@ -35,6 +36,14 @@ LEASE_SECONDS = 30
 # docs/decisions/OPEN-QUESTIONS.md as a deviation/assumption rather than a
 # TBD-nn/D-nn number (hard ban #2 only covers those tagged literals).
 TENDER_WATCH_POLL_INTERVAL_HOURS = 6
+
+# How often run_forever re-checks for due tenders, in wall-clock seconds --
+# deliberately much shorter than TENDER_WATCH_POLL_INTERVAL_HOURS (a
+# scheduling-frequency choice, not a business number) so a due tender is
+# picked up within at most this much drift, without running the
+# DISTINCT ON scan in enqueue_due_tender_checks on every single 1-second
+# poll tick.
+SCHEDULE_CHECK_INTERVAL_SECONDS = 60
 
 
 def _now_iso() -> str:
@@ -68,6 +77,18 @@ async def _process_claimed_job(engine: AsyncEngine, store: JobStore, job: Job, w
                     await store.checkpoint(conn, job.id, worker_id, checkpoint)
                 done = checkpoint["done"]
         elif job.job_type == tender_change_check_job.JOB_TYPE:
+            # `check_tender_for_changes` can walk many BOM pages sequentially
+            # (a real tender may have 40+, per this repo's own captured
+            # fixture evidence) inside this one un-committed transaction --
+            # far longer than LEASE_SECONDS. `_heartbeat` renews the lease on
+            # its OWN short-lived transaction each time it is called (NOT on
+            # `conn`, which stays open/uncommitted for the whole job and
+            # would make an UPDATE on it invisible to other workers' `claim()`
+            # queries until the final commit, defeating the point).
+            async def _heartbeat() -> None:
+                async with engine.begin() as heartbeat_conn:
+                    await store.heartbeat(heartbeat_conn, job.id, worker_id, LEASE_SECONDS)
+
             async with engine.begin() as conn:
                 current = await store.get(conn, job.id)
                 assert current is not None, f"job {job.id} vanished mid-processing (jobs are never deleted)"
@@ -86,6 +107,7 @@ async def _process_claimed_job(engine: AsyncEngine, store: JobStore, job: Job, w
                     ),
                     correlation_id=current.correlation_id,
                     observed_at=_now_iso(),
+                    heartbeat=_heartbeat,
                 )
                 await store.checkpoint(conn, job.id, worker_id, {"done": True})
         else:
@@ -96,11 +118,22 @@ async def _process_claimed_job(engine: AsyncEngine, store: JobStore, job: Job, w
         logger.info("completed job %s", job.id)
     except Exception as exc:
         logger.exception("job %s failed", job.id)
-        async with engine.begin() as conn:
-            current = await store.get(conn, job.id)
-            assert current is not None, f"job {job.id} vanished mid-processing (jobs are never deleted)"
-            backoff = compute_backoff_seconds(current.attempt + 1)
-            await store.fail_retry(conn, job.id, worker_id, error=str(exc), backoff_seconds=backoff)
+        # A heartbeat renews the lease, but a residual race is still
+        # possible (e.g. a heartbeat call itself lost the race to a
+        # reclaim) -- `store.fail_retry` then raises `JobNotOwned` because
+        # this worker no longer holds the lease. That must NOT escape this
+        # handler: the other worker that reclaimed the job owns recording
+        # its own outcome now, and letting JobNotOwned propagate here would
+        # crash run_forever's entire `while True` loop over a single job's
+        # bookkeeping race.
+        try:
+            async with engine.begin() as conn:
+                current = await store.get(conn, job.id)
+                assert current is not None, f"job {job.id} vanished mid-processing (jobs are never deleted)"
+                backoff = compute_backoff_seconds(current.attempt + 1)
+                await store.fail_retry(conn, job.id, worker_id, error=str(exc), backoff_seconds=backoff)
+        except JobNotOwned:
+            logger.warning("job %s's lease was already reclaimed by another worker; leaving its outcome to that worker", job.id)
 
 
 async def run_once(engine: AsyncEngine, store: JobStore, worker_id: str) -> bool:
@@ -161,8 +194,17 @@ async def run_forever(engine: AsyncEngine, worker_id: str | None = None, poll_in
     worker_id = worker_id or f"worker-{uuid.uuid4()}"
     store = JobStore()
     logger.info("worker %s starting", worker_id)
+    # `enqueue_due_tender_checks` does a full DISTINCT ON scan over
+    # `decisions` -- gated on wall-clock time (not every 1-second poll tick)
+    # since the real interval it's checking against is
+    # TENDER_WATCH_POLL_INTERVAL_HOURS (hours), so a once-a-minute check is
+    # still far more frequent than needed and adds at most ~1 minute of
+    # scheduling drift.
+    next_schedule_check = 0.0
     while True:
-        await enqueue_due_tender_checks(engine)
+        if time.monotonic() >= next_schedule_check:
+            await enqueue_due_tender_checks(engine)
+            next_schedule_check = time.monotonic() + SCHEDULE_CHECK_INTERVAL_SECONDS
         claimed = await run_once(engine, store, worker_id)
         if not claimed:
             await asyncio.sleep(poll_interval)

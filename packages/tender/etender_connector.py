@@ -43,10 +43,11 @@ from .signals_store import store_signal
 from .source_contract import SourceContract, canonical_identity
 
 PARSER_VERSION = "etender-v3"
-# v3 (Task 4.B): ingest_event_details's normalized_fields gained
-# end_date/envelope_date/start_date -- needed to detect a deadline shift on
-# re-ingestion (TENDER_INTELLIGENCE_SPEC.md §7.2, P317). Raw epoch-seconds
-# integers, taken verbatim -- no timezone interpretation invented here.
+# v2 (Task 4.A Final Review, finding C1 fix): normalized_fields gained "id"
+# -- the numeric eTender event id, bridging an event_details tender to the
+# real (source, event_id) BOQ aggregate key.
+# v3 (Task 4.B): normalized_fields gained end_date/envelope_date/start_date
+# -- needed to detect a deadline shift on re-ingestion (P317).
 
 
 async def _ingest(

@@ -245,6 +245,9 @@ async def test_boq_line_change_is_flagged_without_mutating_boq_lines(engine):
             raw_snapshot_id=version.raw_snapshot_id,
             lines=[line],
         )
+        raw_snapshot_count_before = (
+            await conn.execute(text("SELECT count(*) FROM raw_snapshots WHERE resource_type = 'etender.bom_lines_page'"))
+        ).scalar_one()
 
     async def fetch_event_details(eid):
         # document_number changed -> triggers a re-walk of BOM pages
@@ -272,7 +275,146 @@ async def test_boq_line_change_is_flagged_without_mutating_boq_lines(engine):
         # boq_lines itself must be untouched -- still exactly the ORIGINAL
         # qty=10, never overwritten by the live re-fetch's qty=15.
         stored_lines = await list_boq_lines_by_event(conn, source="etender", event_id=event_id)
+        # I2 review fix: the re-walked page must go through the SAME raw
+        # evidence capture every other bom_lines ingestion in this codebase
+        # gets (ADR-0003 layer-1) -- confirms a new raw_snapshots row landed
+        # for the re-fetch, not just that build_boq_lines was called on
+        # discarded bytes.
+        raw_snapshot_count_after = (
+            await conn.execute(text("SELECT count(*) FROM raw_snapshots WHERE resource_type = 'etender.bom_lines_page'"))
+        ).scalar_one()
 
     assert [f["boqline_source_line_id"] for f in flags] == [501]
     assert len(stored_lines) == 1
     assert stored_lines[0].qty == Decimal("10")
+    assert raw_snapshot_count_after == raw_snapshot_count_before + 1
+
+
+async def test_heartbeat_is_called_once_per_bom_page(engine):
+    event_id = 700005
+    async with engine.begin() as conn:
+        await ingest_event_details(
+            conn,
+            raw_body=b"{}",
+            payload=_details_payload(event_id, end_date=1788354059, document_number="DOC-1"),
+            correlation_id="test-4b-job-5",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key=f"etender.event_details|id={event_id}")
+
+    async def fetch_event_details(eid):
+        # document_number changed -> triggers a re-walk of BOM pages, which
+        # is the only place heartbeat() is called.
+        payload = _details_payload(event_id, end_date=1788354059, document_number="DOC-2")
+        return json.dumps(payload).encode("utf-8"), payload
+
+    total_pages = 3
+
+    async def fetch_bom_page(eid, page_number):
+        payload = _bom_page_payload(event_id, page_number, total_pages=total_pages, items=[_bom_item(800 + page_number)])
+        return json.dumps(payload).encode("utf-8"), payload
+
+    heartbeat_calls = 0
+
+    async def heartbeat():
+        nonlocal heartbeat_calls
+        heartbeat_calls += 1
+
+    async with engine.begin() as conn:
+        result = await check_tender_for_changes(
+            conn,
+            tender_id=tender_id,
+            fetch_event_details=fetch_event_details,
+            fetch_bom_page=fetch_bom_page,
+            correlation_id="test-4b-job-5",
+            observed_at="2026-08-09T12:00:00+00:00",
+            heartbeat=heartbeat,
+        )
+
+    assert result["change_detected"] is True
+    assert heartbeat_calls == total_pages
+
+
+async def test_schema_drift_on_one_bom_page_does_not_block_the_others(engine):
+    event_id = 700006
+    async with engine.begin() as conn:
+        await ingest_event_details(
+            conn,
+            raw_body=b"{}",
+            payload=_details_payload(event_id, end_date=1788354059, document_number="DOC-1"),
+            correlation_id="test-4b-job-6",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key=f"etender.event_details|id={event_id}")
+        version = await ingest_bom_lines_page(
+            conn,
+            event_id=event_id,
+            raw_body=b"{}",
+            payload=_bom_page_payload(event_id, 1, 2, [_bom_item(601, qty=10.0)]),
+            correlation_id="test-4b-job-6",
+        )
+        old_lines = build_boq_lines(page_number=1, items=[_bom_item(601, qty=10.0)]) + build_boq_lines(
+            page_number=2, items=[_bom_item(602, qty=20.0)]
+        )
+        await store_boq_lines(
+            conn,
+            source="etender",
+            event_id=event_id,
+            tender_version_id=version.id,
+            raw_snapshot_id=version.raw_snapshot_id,
+            lines=old_lines,
+        )
+
+    async def fetch_event_details(eid):
+        payload = _details_payload(event_id, end_date=1788354059, document_number="DOC-2")
+        return json.dumps(payload).encode("utf-8"), payload
+
+    async def fetch_bom_page(eid, page_number):
+        if page_number == 1:
+            # Page 1: real schema drift (a required BOM_LINE_ITEM_CONTRACT
+            # field is missing), not a legitimate field change -- must not
+            # crash the whole re-walk or block page 2 from being diffed.
+            item = _bom_item(601, qty=10.0)
+            del item["description"]
+            payload = _bom_page_payload(event_id, 1, total_pages=2, items=[item])
+        else:
+            # Page 2: a real, valid qty change -- must still be correctly
+            # diffed despite page 1's drift.
+            payload = _bom_page_payload(event_id, 2, total_pages=2, items=[_bom_item(602, qty=99.0)])
+        return json.dumps(payload).encode("utf-8"), payload
+
+    async with engine.begin() as conn:
+        result = await check_tender_for_changes(
+            conn,
+            tender_id=tender_id,
+            fetch_event_details=fetch_event_details,
+            fetch_bom_page=fetch_bom_page,
+            correlation_id="test-4b-job-6",
+            observed_at="2026-08-09T12:00:00+00:00",
+        )
+
+    # Page 2's real change is still detected -- drift on page 1 did not stop
+    # the re-walk from reaching/diffing page 2.
+    assert result["change_detected"] is True
+
+    async with engine.begin() as conn:
+        flags = await list_unresolved_recalc_flags(conn, tender_id=tender_id)
+        exception_rows = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT source, exception_type, category, status FROM exception_queue "
+                        "WHERE correlation_id = :correlation_id"
+                    ),
+                    {"correlation_id": "test-4b-job-6"},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    flagged_ids = {f["boqline_source_line_id"] for f in flags}
+    assert 602 in flagged_ids
+    assert len(exception_rows) == 1
+    assert exception_rows[0]["source"] == "etender"
+    assert exception_rows[0]["exception_type"] == "schema_drift"
+    assert exception_rows[0]["category"] == "needs_human"
+    assert exception_rows[0]["status"] == "open"
