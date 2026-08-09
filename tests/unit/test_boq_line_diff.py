@@ -67,6 +67,18 @@ def test_diff_boq_lines_result_is_sorted():
     assert diff_boq_lines(old, new) == (1, 3, 5)
 
 
+def test_diff_boq_lines_detects_a_changed_rate():
+    old = [_line(1, rate=Decimal("850"))]
+    new = [_line(1, rate=Decimal("900"))]
+    assert diff_boq_lines(old, new) == (1,)
+
+
+def test_diff_boq_lines_detects_a_changed_unit_raw():
+    old = [_line(1, unit_raw="t")]
+    new = [_line(1, unit_raw="kg")]
+    assert diff_boq_lines(old, new) == (1,)
+
+
 def test_diff_boq_lines_ignores_unit_canonical_and_status_and_page_number():
     # unit_canonical/unit_status/page_number are derived/positional, not
     # substantive content -- a line that only differs there (e.g. a
