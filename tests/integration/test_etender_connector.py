@@ -49,6 +49,9 @@ async def test_ingest_real_fixture_creates_raw_snapshot_and_normalized_version(e
     # an event_details tender back to the real (source, event_id) BOQ
     # aggregate key (packages/tender/normalized.py's get_event_id_for_tender).
     assert version.normalized_fields["id"] == payload["id"]
+    assert version.normalized_fields["end_date"] == payload["endDate"]
+    assert version.normalized_fields["envelope_date"] == payload["envelopeDate"]
+    assert version.normalized_fields["start_date"] == payload["startDate"]
 
     async with engine.begin() as conn:
         row = (
