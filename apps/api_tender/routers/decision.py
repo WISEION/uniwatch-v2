@@ -43,6 +43,7 @@ from packages.platform.idempotency import IdempotencyKeyReused, IdempotencyStore
 from packages.platform.rbac.dependency import require_permission
 from packages.platform.rbac.models import Identity
 from packages.tender.boq_lines_store import list_boq_lines_by_event
+from packages.tender.change_tracking_store import list_unresolved_recalc_flags
 from packages.tender.normalized import get_event_id_for_tender
 
 from ..deps import get_connection, get_current_identity, get_vendor_http_client
@@ -111,6 +112,13 @@ class LockInRequirementResponse(BaseModel):
     vendor_id: int
     vendor_name: str
     status: str
+
+
+class RecalcFlagResponse(BaseModel):
+    id: int
+    boqline_source_line_id: int
+    change_event_id: int
+    flagged_at: datetime
 
 
 class DecisionResponse(BaseModel):
@@ -343,3 +351,21 @@ async def create_decision(
     )
     await _idempotency_store.store_response(conn, idempotency_key, route, 201, response.model_dump(mode="json"))
     return response
+
+
+@router.get("/recalc-flags", response_model=list[RecalcFlagResponse])
+async def get_recalc_flags(
+    tender_id: int,
+    conn: AsyncConnection = Depends(get_connection),
+    identity: Identity = Depends(require_permission("decision.recalc_flags.read", get_current_identity)),
+) -> list[RecalcFlagResponse]:
+    flags = await list_unresolved_recalc_flags(conn, tender_id=tender_id)
+    return [
+        RecalcFlagResponse(
+            id=f["id"],
+            boqline_source_line_id=f["boqline_source_line_id"],
+            change_event_id=f["change_event_id"],
+            flagged_at=f["flagged_at"],
+        )
+        for f in flags
+    ]
