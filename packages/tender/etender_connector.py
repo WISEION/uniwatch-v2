@@ -332,3 +332,24 @@ async def fetch_procurement_plan_page_live(
     if status != 200:
         raise UnexpectedResponseStatus(f"eTender app-list search returned HTTP {status} for {url!r}")
     return body, json.loads(body)
+
+
+async def fetch_event_details_live(
+    conn: AsyncConnection, validator: EgressValidator, *, event_id: int
+) -> tuple[bytes, dict[str, Any]]:
+    url = f"https://etender.gov.az/api/events/{event_id}"
+    status, body, _headers = await fetch_via_validator(conn, validator, url)
+    if status != 200:
+        raise UnexpectedResponseStatus(f"eTender event details returned HTTP {status} for {url!r}")
+    return body, json.loads(body)
+
+
+async def fetch_bom_lines_page_live(
+    conn: AsyncConnection, validator: EgressValidator, *, event_id: int, page_number: int
+) -> tuple[bytes, dict[str, Any]]:
+    params = {"PageSize": 100, "PageNumber": page_number}
+    url = f"https://etender.gov.az/api/events/{event_id}/bomLines?{urlencode(params)}"
+    status, body, _headers = await fetch_via_validator(conn, validator, url)
+    if status != 200:
+        raise UnexpectedResponseStatus(f"eTender BOM lines page returned HTTP {status} for {url!r}")
+    return body, json.loads(body)
