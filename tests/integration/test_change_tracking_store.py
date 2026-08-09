@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy import text
+
 from packages.tender.change_tracking_store import (
     get_watch_state,
     list_unresolved_recalc_flags,
@@ -96,3 +98,28 @@ async def test_upsert_watch_state_then_get_returns_the_latest_checked_at(engine)
 
     assert first == "2026-08-09T00:00:00+00:00"
     assert second == "2026-08-09T06:00:00+00:00"
+
+
+async def test_list_unresolved_recalc_flags_excludes_a_resolved_flag(engine):
+    async with engine.begin() as conn:
+        tender_id, snapshot_id = await _make_tender(conn, "test-4b-store-resolved")
+        change_event_id = await store_tender_change_event(
+            conn,
+            tender_id=tender_id,
+            change_type="deadline_shift",
+            changed_fields=(),
+            detected_at="2026-08-09T00:00:00+00:00",
+            raw_snapshot_id=snapshot_id,
+        )
+        flag_id = await store_boq_line_recalc_flag(
+            conn,
+            tender_id=tender_id,
+            boqline_source_line_id=501,
+            change_event_id=change_event_id,
+            flagged_at="2026-08-09T00:00:00+00:00",
+        )
+        await conn.execute(text("UPDATE boq_line_recalc_flags SET resolved_at = now() WHERE id = :id"), {"id": flag_id})
+
+        flags = await list_unresolved_recalc_flags(conn, tender_id=tender_id)
+
+    assert flags == []
