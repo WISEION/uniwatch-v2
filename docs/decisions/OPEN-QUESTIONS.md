@@ -788,6 +788,8 @@ Six further gaps recorded, not silently approximated:
 
 **Source conflict (if any):** None.
 
+**Owner follow-up needed:** Yes, non-blocking for this merge. Item 3 needs an owner/architecture call on whether `GET /bid-readiness-candidate` should move its computation to `apps/worker` (async job + polling) before real, multi-thousand-line tenders reach it in production — synthetic/sandbox data today makes this low-urgency.
+
 ## 2026-08-09 — Task 4.B (post-submission tracking) wired into the worker; two gaps deliberately left open
 
 **Context:** Task 4.B, task 6 (final task of the plan) — `packages/tender/post_submission_tracking_job.py`'s `check_tender_for_changes` (task 5) is now actually dispatched by `apps/worker/main.py`, alongside the pre-existing `example_job` stub type (the first REAL job-type dispatch this worker has ever had). `apps/worker/main.py` also gained `enqueue_due_tender_checks()`, called once per `run_forever` outer-loop iteration, which enqueues a `tender_change_check` job for every tender that (a) has an active `bid`/`conditional_bid` decision (`list_tenders_with_active_bid_decision`, task 4) and (b) is due per `tender_watch_state`'s own last-checked timestamp (`list_tenders_due_for_check`, task 4). `GET /tenders/{tender_id}/recalc-flags` (permission `decision.recalc_flags.read`) exposes `list_unresolved_recalc_flags` (task 3) as a new read-only route on the existing `apps/api_tender/routers/decision.py` router.
@@ -803,5 +805,3 @@ Six further gaps recorded, not silently approximated:
 **Source conflict (if any):** None.
 
 **Owner follow-up needed:** Yes, non-blocking. (a) Schedule a fixture-capture session for the Q&A/clarifications endpoint when eTender access is next available. (b) Decide and build the `resolved_at`-clearing mechanism (most likely inside a future `GET /bid-readiness-candidate` recompute path) before recalc flags are relied on operationally as a "needs attention now" signal rather than a permanent historical log.
-
-**Owner follow-up needed:** Yes, non-blocking for this merge. Item 3 needs an owner/architecture call on whether `GET /bid-readiness-candidate` should move its computation to `apps/worker` (async job + polling) before real, multi-thousand-line tenders reach it in production — synthetic/sandbox data today makes this low-urgency.

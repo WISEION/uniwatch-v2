@@ -1068,6 +1068,8 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 
 **Дальше:** ветка готова к слиянию (`finishing-a-development-branch`).
 
+**Блокеры:** нет.
+
 ## 2026-08-09 — Задание: Phase 4, задача 4.B (post-submission tracking), реализация (6 подзадач)
 
 **Сделано:**
@@ -1095,5 +1097,3 @@ PASS: v1 untouched (no forbidden path literals, no baseline drift).
 **Дальше:** Task 4.B закрыта end-to-end (детекция изменений → флагирование затронутых BOQ-строк → реальный worker dispatch → человеко-читаемый read API). Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7: задача 4.C (Execution Ledger).
 
 **Блокеры:** нет новых. Оба зафиксированных пробела (Q&A tracking, `resolved_at` clearing) — некритичные, той же дисциплины, что и во всех предыдущих фазах.
-
-**Блокеры:** нет.

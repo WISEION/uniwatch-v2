@@ -6,9 +6,17 @@ no real eTender fetch and no real egress validator."""
 
 from __future__ import annotations
 
+import json
+
+from sqlalchemy import text
+
 import apps.worker.main as worker_main
+from packages.decision.decision_model import Decision
+from packages.decision.decision_store import store_decision
 from packages.platform.jobs import JobIdentity, JobStore
+from packages.tender.normalized import create_normalized_version, get_or_create_tender
 from packages.tender.post_submission_tracking_job import JOB_TYPE as TENDER_CHECK_JOB_TYPE
+from packages.tender.raw_snapshot import save_raw_snapshot
 
 
 async def test_worker_dispatches_a_tender_change_check_job(engine, monkeypatch):
@@ -48,3 +56,60 @@ async def test_worker_dispatches_a_tender_change_check_job(engine, monkeypatch):
     async with engine.begin() as conn:
         job = await store.get(conn, job_id)
     assert job.status == "completed"
+
+
+async def test_enqueue_due_tender_checks_does_not_double_enqueue_a_still_pending_tender(engine):
+    """Review-fix regression test: `list_tenders_due_for_check`'s gate is
+    `tender_watch_state.last_checked_at`, which used to be written ONLY at
+    job-completion time (inside `check_tender_for_changes`). Since
+    `run_forever` calls `enqueue_due_tender_checks` every outer-loop
+    iteration and `run_once` claims at most one job per call,
+    `JobStore.enqueue`'s plain INSERT (no identity dedup) meant a tender
+    whose job hadn't finished yet got re-enqueued on every single
+    iteration. `enqueue_due_tender_checks` must now upsert
+    `tender_watch_state` at ENQUEUE time so a second call immediately after
+    the first sees the tender as no-longer-due."""
+    async with engine.begin() as conn:
+        raw_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="event_details",
+            identity_key="test-worker-dispatch-dedup",
+            raw_body=json.dumps({"eventId": 1}).encode("utf-8"),
+            contract_version="v1",
+            correlation_id="test-worker-dispatch-dedup",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-worker-dispatch-dedup")
+        await create_normalized_version(
+            conn, tender_id=tender_id, raw_snapshot_id=raw_snapshot_id, parser_version="v1", normalized_fields={}
+        )
+        await store_decision(
+            conn,
+            Decision(
+                tender_id=tender_id,
+                decision_type="bid",
+                conditions=(),
+                deadline=None,
+                justification="test",
+                actor="pm-1",
+                decided_at="2026-08-09T00:00:00+00:00",
+                go_no_go_inputs_id=None,
+                bid_readiness_candidate_id=None,
+            ),
+        )
+
+    first_enqueued = await worker_main.enqueue_due_tender_checks(engine)
+    second_enqueued = await worker_main.enqueue_due_tender_checks(engine)
+
+    assert first_enqueued == 1
+    assert second_enqueued == 0
+
+    async with engine.begin() as conn:
+        job_count = (
+            await conn.execute(
+                text("SELECT count(*) FROM jobs WHERE job_type = :jt AND params->>'tender_id' = :tid"),
+                {"jt": TENDER_CHECK_JOB_TYPE, "tid": str(tender_id)},
+            )
+        ).scalar_one()
+
+    assert job_count == 1

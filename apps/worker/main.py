@@ -21,7 +21,7 @@ from packages.platform.logging import configure_logging
 from packages.platform.settings import get_settings
 from packages.tender import etender_connector
 from packages.tender import post_submission_tracking_job as tender_change_check_job
-from packages.tender.change_tracking_store import list_tenders_due_for_check
+from packages.tender.change_tracking_store import list_tenders_due_for_check, upsert_watch_state
 
 from . import example_job
 
@@ -120,7 +120,20 @@ async def enqueue_due_tender_checks(engine: AsyncEngine) -> int:
     `tender_watch_state`'s own last-checked timestamp -- called once per
     `run_forever` outer loop iteration (never per claimed job), so this is
     cheap-but-frequent against a timestamp gate rather than a spammy
-    per-job side effect."""
+    per-job side effect.
+
+    `upsert_watch_state` is called here, at ENQUEUE time, for every tender
+    just enqueued -- not only later inside `check_tender_for_changes` at
+    completion time. `JobStore.enqueue` is a plain INSERT with no identity
+    dedup, and the job may take a while to actually be claimed/run (`run_once`
+    processes at most one job per call); without marking the tender as
+    "checked" immediately, every subsequent outer-loop iteration would see
+    the same still-pending tender as still due and enqueue another
+    duplicate job for it, unboundedly, until the first one finally
+    completes. `check_tender_for_changes` still calls `upsert_watch_state`
+    again on its own completion (unchanged) -- that later call just
+    overwrites the same row with the real observed_at once the check
+    actually ran; the double-write is harmless (plain idempotent upsert)."""
     async with engine.begin() as conn:
         tracked = await list_tenders_with_active_bid_decision(conn)
         due = await list_tenders_due_for_check(
@@ -140,6 +153,7 @@ async def enqueue_due_tender_checks(engine: AsyncEngine) -> int:
                     correlation_id=f"tender-watch-{tender_id}",
                 ),
             )
+            await upsert_watch_state(conn, tender_id=tender_id, checked_at=_now_iso())
     return len(due)
 
 
