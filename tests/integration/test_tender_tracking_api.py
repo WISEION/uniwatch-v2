@@ -26,7 +26,7 @@ RECALC_FLAGS_PERMISSIONS = ("decision.recalc_flags.read",)
 
 @pytest_asyncio.fixture
 async def tender_app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=15)
+    settings = Settings(database_url=_database_url, expected_schema_version=16)
     app = create_tender_app(settings)
     app.state.engine = engine
     return app
