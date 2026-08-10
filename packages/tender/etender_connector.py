@@ -42,12 +42,12 @@ from .schema_drift import SchemaDriftDetected, detect_schema_drift, detect_schem
 from .signals_store import store_signal
 from .source_contract import SourceContract, canonical_identity
 
-PARSER_VERSION = "etender-v2"
-# v2 (Task 4.A Final Review, finding C1 fix): ingest_event_details's
-# normalized_fields gained "id" -- the layer-2 output shape changed,
-# so ADR-0003's parser_version discipline requires a bump even though
-# ingest_bom_lines_page/ingest_events_list_page, which share this constant,
-# did not change shape themselves.
+PARSER_VERSION = "etender-v3"
+# v2 (Task 4.A Final Review, finding C1 fix): normalized_fields gained "id"
+# -- the numeric eTender event id, bridging an event_details tender to the
+# real (source, event_id) BOQ aggregate key.
+# v3 (Task 4.B): normalized_fields gained end_date/envelope_date/start_date
+# -- needed to detect a deadline shift on re-ingestion (P317).
 
 
 async def _ingest(
@@ -129,6 +129,9 @@ async def ingest_event_details(
             # tender to the real (source, event_id) BOQ aggregate key
             # (packages/tender/normalized.py's get_event_id_for_tender).
             "id": p["id"],
+            "end_date": p.get("endDate"),
+            "envelope_date": p.get("envelopeDate"),
+            "start_date": p.get("startDate"),
             "tender_name": p["tenderName"],
             "organization_name": p["organizationName"],
             "organization_voen": p.get("organizationVoen"),
@@ -329,4 +332,25 @@ async def fetch_procurement_plan_page_live(
     status, body, _headers = await fetch_via_validator(conn, validator, url)
     if status != 200:
         raise UnexpectedResponseStatus(f"eTender app-list search returned HTTP {status} for {url!r}")
+    return body, json.loads(body)
+
+
+async def fetch_event_details_live(
+    conn: AsyncConnection, validator: EgressValidator, *, event_id: int
+) -> tuple[bytes, dict[str, Any]]:
+    url = f"https://etender.gov.az/api/events/{event_id}"
+    status, body, _headers = await fetch_via_validator(conn, validator, url)
+    if status != 200:
+        raise UnexpectedResponseStatus(f"eTender event details returned HTTP {status} for {url!r}")
+    return body, json.loads(body)
+
+
+async def fetch_bom_lines_page_live(
+    conn: AsyncConnection, validator: EgressValidator, *, event_id: int, page_number: int
+) -> tuple[bytes, dict[str, Any]]:
+    params = {"PageSize": 100, "PageNumber": page_number}
+    url = f"https://etender.gov.az/api/events/{event_id}/bomLines?{urlencode(params)}"
+    status, body, _headers = await fetch_via_validator(conn, validator, url)
+    if status != 200:
+        raise UnexpectedResponseStatus(f"eTender BOM lines page returned HTTP {status} for {url!r}")
     return body, json.loads(body)

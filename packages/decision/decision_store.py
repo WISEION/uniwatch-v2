@@ -185,3 +185,22 @@ async def list_lock_in_requirements_by_tender(conn: AsyncConnection, *, tender_i
         .all()
     )
     return [dict(row) for row in rows]
+
+
+async def list_tenders_with_active_bid_decision(conn: AsyncConnection) -> list[int]:
+    rows = (
+        (
+            await conn.execute(
+                text(
+                    """
+                SELECT DISTINCT ON (tender_id) tender_id, decision_type
+                FROM decisions
+                ORDER BY tender_id, decided_at DESC, id DESC
+                """
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [row["tender_id"] for row in rows if row["decision_type"] in ("bid", "conditional_bid")]

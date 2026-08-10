@@ -1069,3 +1069,31 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** ветка готова к слиянию (`finishing-a-development-branch`).
 
 **Блокеры:** нет.
+
+## 2026-08-09 — Задание: Phase 4, задача 4.B (post-submission tracking), реализация (6 подзадач)
+
+**Сделано:**
+- Задача 1: поля дедлайна в нормализации `event_details` + чистая (без побочных эффектов) функция `diff_normalized_fields`/`classify_change_type` (`packages/tender/tender_change_detection.py`).
+- Задача 2: чистый in-memory дифф BOQ-строк по `source_line_id` (`packages/tender/boq_line_diff.py::diff_boq_lines`), обнаруживает изменённые/удалённые/новые строки без похода в БД.
+- Задача 3: migration `0015_post_submission_tracking.sql` (schema version 14→15) — `tender_change_events` и `boq_line_recalc_flags` (append-only, без единого UPDATE/DELETE из `change_tracking_store.py`), `tender_watch_state` (единственная мутируемая таблица — операционный high-water-mark, не факт и не решение человека). `list_unresolved_recalc_flags`/`list_tenders_due_for_check` там же.
+- Задача 4: `packages/decision/decision_store.py::list_tenders_with_active_bid_decision` (последнее решение по каждому тендеру, только `bid`/`conditional_bid`) + `list_tenders_due_for_check` (LEFT JOIN на `tender_watch_state`, `last_checked_at IS NULL OR <= now() - interval`).
+- Задача 5: `packages/tender/etender_connector.py::fetch_event_details_live`/`fetch_bom_lines_page_live` (реальные live-обёртки через `fetch_via_validator`, та же egress-дисциплина, что и у остальных коннекторов) + `packages/tender/post_submission_tracking_job.py::check_tender_for_changes` — перепроверяет `event_details` уже решённого (`bid`/`conditional_bid`) тендера, диффит нормализованные поля против предыдущей версии, и только при реальном изменении перевычитывает BOM-страницы и диффит BOQ-строки (не переиспользует `ingest_event_details`'s версионирование как перезапись — каждый вызов создаёт новую `tender_versions` строку). `SchemaDriftDetected` уходит в `exception_queue`, не молча.
+- Задача 6 (это задание, финальная): 
+  - `apps/worker/main.py` — первый РЕАЛЬНЫЙ job-type dispatch (`tender_change_check_job.JOB_TYPE`) рядом с уже существующим `example_job` stub-типом; `get_egress_validator()` (та же конструкция `EgressValidator()`, что уже используется на всех live-вызовах в `tests/security/test_*_live_fetch.py` — реальный DNS-резолвер, без переопределения); новая `enqueue_due_tender_checks()`, вызываемая один раз за итерацию внешнего цикла `run_forever` (не на каждый claim), которая ставит job на каждый тендер из `list_tenders_with_active_bid_decision` ∩ `list_tenders_due_for_check`. `TENDER_WATCH_POLL_INTERVAL_HOURS = 6` — owner-решение, не `TBD-nn`/`D-nn`-число, зафиксировано в OPEN-QUESTIONS.
+  - `apps/api_tender/routers/decision.py` — новый `GET /tenders/{tender_id}/recalc-flags` (permission `decision.recalc_flags.read`, тот же `require_permission`/deny-by-default паттерн, что и на всех остальных маршрутах этого роутера), отдаёт `list_unresolved_recalc_flags` как список.
+  - Новые тесты: `tests/integration/test_worker_dispatch.py` (реальный `JobStore.enqueue` → `run_once` → dispatch, `check_tender_for_changes` застаблен через `monkeypatch.setattr` на атрибут модуля, без реального eTender/egress); `tests/integration/test_tender_tracking_api.py` (401 без auth, 200 с пустым списком, 200 с одним флагом после прямой записи в БД) — по образцу фикстур `test_decision_api.py` (`tender_app`/`client`/`pm_user`/`tender_with_boq`), без vendor-приложения (этому маршруту Vendor-сервис не нужен).
+  - Два отложенных пробела зафиксированы в `docs/decisions/OPEN-QUESTIONS.md` (2026-08-09), не замолчаны: (1) Q&A/уточнения покупателя не отслеживаются вообще — нет захваченного eTender-эндпоинта, нужна отдельная сессия обнаружения, как в задаче 1.A; (2) ничто в кодовой базе не проставляет `boq_line_recalc_flags.resolved_at` — флаг остаётся навсегда, пока какой-то будущий процесс (предположительно повторный вызов `GET /bid-readiness-candidate`) явно его не снимет — этот процесс этой задачей не строится.
+
+**Вывод полного прогона (Fast+Full gate):**
+```
+$ python -m pytest tests/ -q -m "not live_network"
+476 passed, 33 skipped, 3 deselected in 377.10s (0:06:17)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps
+262 files already formatted / All checks passed! / Success: no issues found in 88 source files
+$ python tools/check_v1_untouched.py
+PASS: v1 untouched (no forbidden path literals, no baseline drift).
+```
+
+**Дальше:** Task 4.B закрыта end-to-end (детекция изменений → флагирование затронутых BOQ-строк → реальный worker dispatch → человеко-читаемый read API). Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7: задача 4.C (Execution Ledger).
+
+**Блокеры:** нет новых. Оба зафиксированных пробела (Q&A tracking, `resolved_at` clearing) — некритичные, той же дисциплины, что и во всех предыдущих фазах.
