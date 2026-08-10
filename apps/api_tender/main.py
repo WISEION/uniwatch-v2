@@ -42,6 +42,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_users.router)
     app.include_router(decision.router)
     app.include_router(execution_ledger.router)
+    app.include_router(execution_ledger.organization_router)
     return app
 
 

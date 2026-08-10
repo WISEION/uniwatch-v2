@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -37,7 +38,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from packages.contracts.vendor_api import VendorApiError, report_reputation_fact
 from packages.decision.decision_store import list_lock_in_requirements_by_tender
 from packages.decision.execution_fact_model import ExecutionFact
-from packages.decision.execution_ledger_store import list_execution_facts_by_tender, store_execution_fact
+from packages.decision.execution_ledger_store import (
+    list_execution_facts_by_organization_voen,
+    list_execution_facts_by_tender,
+    store_execution_fact,
+    store_overhead_buffer_contribution,
+)
+from packages.decision.execution_ledger_summary import summarize_deviation_category_counts, summarize_plan_fact_deltas
 from packages.decision.execution_napkin_evidence import save_execution_napkin_evidence
 from packages.decision.execution_napkin_provider import ExecutionNapkinParseError, ExecutionNapkinProvider
 from packages.decision.reputation_feed import map_to_reputation_event_type
@@ -326,3 +333,87 @@ async def get_execution_facts(
             for f in facts
         ]
     )
+
+
+class PlanFactDeltaResponse(BaseModel):
+    boqline_source_line_id: int
+    planned_qty: str
+    actual_qty: str
+    delta: str
+
+
+class ExecutionSummaryResponse(BaseModel):
+    plan_fact_deltas: list[PlanFactDeltaResponse]
+    deviation_category_counts: dict[str, int]
+
+
+async def _build_summary(conn: AsyncConnection, *, tender_id: int) -> ExecutionSummaryResponse:
+    facts = await list_execution_facts_by_tender(conn, tender_id=tender_id)
+    deltas = summarize_plan_fact_deltas(facts)
+    counts = summarize_deviation_category_counts(facts)
+    return ExecutionSummaryResponse(
+        plan_fact_deltas=[
+            PlanFactDeltaResponse(
+                boqline_source_line_id=d.boqline_source_line_id,
+                planned_qty=str(d.planned_qty),
+                actual_qty=str(d.actual_qty),
+                delta=str(d.delta),
+            )
+            for d in deltas
+        ],
+        deviation_category_counts=counts,
+    )
+
+
+@router.get("/execution-summary", response_model=ExecutionSummaryResponse)
+async def get_execution_summary(
+    tender_id: int,
+    conn: AsyncConnection = Depends(get_connection),
+    identity: Identity = Depends(require_permission("decision.execution_facts.read", get_current_identity)),
+) -> ExecutionSummaryResponse:
+    return await _build_summary(conn, tender_id=tender_id)
+
+
+@router.post("/close-project", response_model=ExecutionSummaryResponse)
+async def close_project(
+    tender_id: int,
+    conn: AsyncConnection = Depends(get_connection),
+    identity: Identity = Depends(require_permission("decision.execution_facts.close_project", get_current_identity)),
+) -> ExecutionSummaryResponse:
+    summary = await _build_summary(conn, tender_id=tender_id)
+    contributed_at = datetime.now(UTC).isoformat()
+    for category, count in summary.deviation_category_counts.items():
+        await store_overhead_buffer_contribution(
+            conn, tender_id=tender_id, deviation_category=category, fact_count=count, contributed_at=contributed_at
+        )
+    await write_audit_log(
+        conn,
+        actor=identity.subject,
+        action="execution_ledger.close_project",
+        object_type="tender",
+        object_id=str(tender_id),
+        object_version=None,
+        reason=None,
+    )
+    return summary
+
+
+class OrganizationExecutionHistoryResponse(BaseModel):
+    items: list[dict[str, Any]]
+
+
+# get_organization_execution_history spans tenders (it looks up every
+# tender sharing one buyer's organization_voen) -- it does not belong on
+# `router`, which is prefixed /tenders/{tender_id}. A second, separate
+# router carries it instead.
+organization_router = APIRouter(prefix="/organizations/{organization_voen}", tags=["execution-ledger"])
+
+
+@organization_router.get("/execution-history", response_model=OrganizationExecutionHistoryResponse)
+async def get_organization_execution_history(
+    organization_voen: str,
+    conn: AsyncConnection = Depends(get_connection),
+    identity: Identity = Depends(require_permission("decision.execution_facts.read", get_current_identity)),
+) -> OrganizationExecutionHistoryResponse:
+    items = await list_execution_facts_by_organization_voen(conn, organization_voen=organization_voen)
+    return OrganizationExecutionHistoryResponse(items=items)

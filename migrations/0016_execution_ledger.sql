@@ -49,3 +49,19 @@ CREATE TABLE execution_facts (
 );
 
 CREATE INDEX execution_facts_tender_idx ON execution_facts (tender_id);
+
+-- Project closure output (P318's "вклад в исторический буфер накладных"):
+-- a RAW COUNT per deviation_category, not a cost-weighted adjustment -- the
+-- formula that turns this into an actual estimate overlay is Phase 4.D's
+-- calibration loop (TENDER_INTELLIGENCE_SPEC.md Section7.4, P319), not built
+-- here. Append-only, same discipline as execution_facts.
+CREATE TABLE overhead_buffer_contributions (
+    id BIGSERIAL PRIMARY KEY,
+    tender_id BIGINT NOT NULL REFERENCES tenders (id),
+    deviation_category TEXT NOT NULL CHECK (deviation_category IN ('preliminaries', 'downtime', 'rework', 'last_mile')),
+    fact_count INTEGER NOT NULL,
+    contributed_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX overhead_buffer_contributions_tender_idx ON overhead_buffer_contributions (tender_id);

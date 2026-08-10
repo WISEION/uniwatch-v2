@@ -28,7 +28,11 @@ from packages.tender.raw_snapshot import save_raw_snapshot
 from packages.vendor.vendor_model import Vendor
 from packages.vendor.vendor_store import store_vendor
 
-EXECUTION_LEDGER_PERMISSIONS = ("decision.execution_facts.create", "decision.execution_facts.read")
+EXECUTION_LEDGER_PERMISSIONS = (
+    "decision.execution_facts.create",
+    "decision.execution_facts.read",
+    "decision.execution_facts.close_project",
+)
 
 
 class FakeOcrEngine:
@@ -550,3 +554,72 @@ async def test_vendor_culprit_with_ttl_reports_reputation_fact_to_vendor_service
             .all()
         )
         assert exc_rows == []
+
+
+async def test_execution_summary_reports_the_delta(client, pm_user, tender_with_boq_and_lock_in, engine):
+    from packages.decision.execution_fact_model import ExecutionFact
+    from packages.decision.execution_ledger_store import store_execution_fact
+
+    async with engine.begin() as conn:
+        await store_execution_fact(
+            conn,
+            ExecutionFact(
+                tender_id=tender_with_boq_and_lock_in,
+                boqline_source_line_id=501,
+                planned_qty=Decimal("10"),
+                actual_qty=Decimal("15"),
+                deviation_reason="more rebar used",
+                deviation_category="rework",
+                culprit_type="internal",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                evidence_source="napkin-ocr:1",
+                observed_at="2026-08-10T00:00:00+00:00",
+            ),
+        )
+
+    response = await client.get(f"/tenders/{tender_with_boq_and_lock_in}/execution-summary", headers={"X-Dev-User": pm_user})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["plan_fact_deltas"][0]["delta"] == "5"
+    assert body["deviation_category_counts"]["rework"] == 1
+
+
+async def test_close_project_persists_overhead_buffer_contributions(client, pm_user, tender_with_boq_and_lock_in, engine):
+    from packages.decision.execution_fact_model import ExecutionFact
+    from packages.decision.execution_ledger_store import store_execution_fact
+
+    async with engine.begin() as conn:
+        await store_execution_fact(
+            conn,
+            ExecutionFact(
+                tender_id=tender_with_boq_and_lock_in,
+                boqline_source_line_id=None,
+                planned_qty=None,
+                actual_qty=None,
+                deviation_reason="site handover delayed",
+                deviation_category="preliminaries",
+                culprit_type="customer",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                evidence_source="napkin-ocr:2",
+                observed_at="2026-08-10T00:00:00+00:00",
+            ),
+        )
+
+    response = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-Dev-User": pm_user})
+    assert response.status_code == 200
+    assert response.json()["deviation_category_counts"]["preliminaries"] == 1
+
+    async with engine.begin() as conn:
+        rows = (
+            (
+                await conn.execute(
+                    text("SELECT deviation_category, fact_count FROM overhead_buffer_contributions WHERE tender_id = :t"),
+                    {"t": tender_with_boq_and_lock_in},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    assert any(r["deviation_category"] == "preliminaries" and r["fact_count"] == 1 for r in rows)
