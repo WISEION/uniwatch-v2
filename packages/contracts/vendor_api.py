@@ -165,3 +165,54 @@ async def list_vendor_offers(
     finally:
         if owns_client:
             await http_client.aclose()
+
+
+class ReportReputationFactRequest(BaseModel):
+    vendor_id: int
+    event_type: str
+    project_ref: str
+    source_ref: str
+    observed_at: str
+    ttl_days: int
+
+
+async def report_reputation_fact(
+    base_url: str,
+    *,
+    vendor_id: int,
+    event_type: str,
+    project_ref: str,
+    source_ref: str,
+    observed_at: str,
+    ttl_days: int,
+    correlation_id: str | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> None:
+    resolved_correlation_id = correlation_id or get_correlation_id_or_none()
+    headers = {CORRELATION_ID_HEADER: resolved_correlation_id} if resolved_correlation_id else {}
+    body = ReportReputationFactRequest(
+        vendor_id=vendor_id,
+        event_type=event_type,
+        project_ref=project_ref,
+        source_ref=source_ref,
+        observed_at=observed_at,
+        ttl_days=ttl_days,
+    )
+
+    owns_client = client is None
+    http_client = client or httpx.AsyncClient()
+    try:
+        response = await http_client.post(
+            f"{base_url}/internal/reputation-facts",
+            json=body.model_dump(),
+            headers=headers,
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        raise VendorApiError(f"vendor service unreachable: {exc}") from exc
+    finally:
+        if owns_client:
+            await http_client.aclose()
+
+    if response.status_code not in (200, 201):
+        raise VendorApiError(f"vendor service returned status {response.status_code}: {response.text}")

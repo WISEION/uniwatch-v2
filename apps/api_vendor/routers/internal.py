@@ -40,14 +40,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.platform.pagination import decode_cursor, encode_cursor
 from packages.vendor.availability_model import effective_executable_status
-from packages.vendor.reputation_model import NEGATIVE_EVENT_TYPES, POSITIVE_EVENT_TYPES
-from packages.vendor.reputation_store import list_active_reputation_facts
+from packages.vendor.reputation_model import NEGATIVE_EVENT_TYPES, POSITIVE_EVENT_TYPES, REPUTATION_EVENT_TYPES, ReputationFact
+from packages.vendor.reputation_store import list_active_reputation_facts, store_reputation_fact
 from packages.vendor.vendor_store import list_offers_with_vendor_name_by_data_realm
 
 from ..deps import get_connection
@@ -132,3 +132,34 @@ async def list_internal_offers(
             )
         )
     return InternalOfferListResponse(items=items, next_cursor=next_cursor)
+
+
+class ReportReputationFactRequest(BaseModel):
+    vendor_id: int
+    event_type: str
+    project_ref: str
+    source_ref: str
+    observed_at: str
+    ttl_days: int
+
+
+@router.post("/internal/reputation-facts", status_code=201)
+async def report_reputation_fact(
+    body: ReportReputationFactRequest,
+    conn: AsyncConnection = Depends(get_connection),
+) -> dict[str, int]:
+    if body.event_type not in REPUTATION_EVENT_TYPES:
+        raise HTTPException(status_code=422, detail=f"unknown event_type: {body.event_type!r}")
+
+    fact = ReputationFact(
+        data_realm="vendor-sandbox",
+        watermark="SYNTHETIC",
+        vendor_name="",  # unused by store_reputation_fact -- vendor_id is the real key
+        event_type=body.event_type,
+        project_ref=body.project_ref,
+        source_ref=body.source_ref,
+        observed_at=body.observed_at,
+        ttl_days=body.ttl_days,
+    )
+    fact_id = await store_reputation_fact(conn, body.vendor_id, fact)
+    return {"id": fact_id}
