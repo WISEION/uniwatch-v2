@@ -11,13 +11,23 @@ reputation_ttl_days has NO default beyond None (INV-17, TBD-TIS-01): a
 vendor-culprit fact with a mappable reputation event_type is only ever
 reported to the Vendor service when the caller explicitly supplies a TTL;
 otherwise the gap is queued for a human via exception_queue, never
-guessed."""
+guessed.
+
+Durability note (task 4.C review fix): `Depends(get_connection)` wraps this
+whole request in ONE transaction that rolls back on any exception raised
+from the route -- including the `ApiError`s this route itself raises for
+`ocr_not_configured`/`napkin_unrecognized`. Evidence capture (INV-18) and
+the napkin_unrecognized exception-queue record must survive those rollbacks,
+so both are written through their own, separately-committed
+`request.app.state.engine.begin()` scope rather than the route's shared
+`conn` -- everything else (storing ExecutionFacts, the reputation feed,
+the audit log) legitimately IS meant to be atomic with the rest of a
+successful request, and keeps using the shared `conn`."""
 
 from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime
-from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -34,7 +44,7 @@ from packages.decision.reputation_feed import map_to_reputation_event_type
 from packages.platform.audit import write_audit_log
 from packages.platform.errors import ApiError
 from packages.platform.exception_queue import enqueue_exception
-from packages.platform.ocr_engine import OcrEngineError
+from packages.platform.ocr_engine import OcrEngine, OcrEngineError
 from packages.platform.ocr_settings import get_ocr_settings
 from packages.platform.ollama_ocr_engine import OllamaOcrEngine
 from packages.platform.rbac.dependency import require_permission
@@ -42,7 +52,7 @@ from packages.platform.rbac.models import Identity
 from packages.tender.boq_lines_store import list_boq_lines_by_event
 from packages.tender.normalized import get_event_id_for_tender
 
-from ..deps import get_connection, get_current_identity, get_vendor_http_client
+from ..deps import get_connection, get_current_identity, get_ocr_engine, get_vendor_http_client
 
 router = APIRouter(prefix="/tenders/{tender_id}", tags=["execution-ledger"])
 
@@ -81,8 +91,31 @@ class NapkinSubmissionResponse(BaseModel):
     facts: list[ExecutionFactResponse]
 
 
+class ExecutionFactRecordResponse(BaseModel):
+    """GET's own typed shape (distinct from ExecutionFactResponse only in
+    carrying `id`/`tender_id`, which a stored-record listing should
+    identify and the POST response doesn't need). planned_qty/actual_qty
+    are stringified the same way POST's response already does --
+    FastAPI's jsonable_encoder silently narrows Decimal to float otherwise,
+    which is exactly the loss of precision this task's own POST response
+    was already written to avoid."""
+
+    id: int
+    tender_id: int
+    boqline_source_line_id: int | None
+    planned_qty: str | None
+    actual_qty: str | None
+    deviation_reason: str
+    deviation_category: str | None
+    culprit_type: str
+    culprit_vendor_name: str | None
+    culprit_vendor_id: int | None
+    evidence_source: str
+    observed_at: str
+
+
 class ExecutionFactListResponse(BaseModel):
-    items: list[dict[str, Any]]
+    items: list[ExecutionFactRecordResponse]
 
 
 @router.post("/execution-facts/napkin", response_model=NapkinSubmissionResponse, status_code=201)
@@ -92,26 +125,48 @@ async def submit_napkin_capture(
     request: Request,
     conn: AsyncConnection = Depends(get_connection),
     vendor_http_client: httpx.AsyncClient | None = Depends(get_vendor_http_client),
+    ocr_engine_override: OcrEngine | None = Depends(get_ocr_engine),
     identity: Identity = Depends(require_permission("decision.execution_facts.create", get_current_identity)),
 ) -> NapkinSubmissionResponse:
     raw_bytes = base64.b64decode(body.image_base64)
     correlation_id = f"execution-ledger-napkin-{tender_id}"
-    evidence_id = await save_execution_napkin_evidence(
-        conn,
-        tender_id=tender_id,
-        capture_kind=body.capture_kind,
-        raw_bytes=raw_bytes,
-        mime_type=body.mime_type,
-        correlation_id=correlation_id,
-    )
+
+    # INV-18: evidence capture must never depend on whether the rest of
+    # this request succeeds. `conn` (Depends(get_connection)) rolls back
+    # on any exception raised further down this function -- so this write
+    # gets its own transaction, committed immediately, independent of that.
+    async with request.app.state.engine.begin() as evidence_conn:
+        evidence_id = await save_execution_napkin_evidence(
+            evidence_conn,
+            tender_id=tender_id,
+            capture_kind=body.capture_kind,
+            raw_bytes=raw_bytes,
+            mime_type=body.mime_type,
+            correlation_id=correlation_id,
+        )
 
     if body.capture_kind == "voice":
+        await write_audit_log(
+            conn,
+            actor=identity.subject,
+            action="execution_facts.create",
+            object_type="execution_napkin_evidence",
+            object_id=str(evidence_id),
+            object_version=None,
+            reason=None,
+        )
         return NapkinSubmissionResponse(evidence_id=evidence_id, parsed=False, facts=[])
 
-    settings = get_ocr_settings()
-    if not settings.ocr_model_name:
-        raise ApiError(status_code=503, code="ocr_not_configured", message="OCR_MODEL_NAME is not set")
-    ocr_engine = OllamaOcrEngine(base_url=settings.ollama_base_url, model_name=settings.ocr_model_name)
+    if ocr_engine_override is not None:
+        # Test-only injection point (mirrors get_vendor_http_client) -- lets
+        # a fake OCR engine drive this route's parse/resolution/reputation
+        # code paths without a real Ollama instance.
+        ocr_engine: OcrEngine = ocr_engine_override
+    else:
+        settings = get_ocr_settings()
+        if not settings.ocr_model_name:
+            raise ApiError(status_code=503, code="ocr_not_configured", message="OCR_MODEL_NAME is not set")
+        ocr_engine = OllamaOcrEngine(base_url=settings.ollama_base_url, model_name=settings.ocr_model_name)
 
     event_id = await get_event_id_for_tender(conn, tender_id=tender_id)
     boq_lines = await list_boq_lines_by_event(conn, source="etender", event_id=event_id) if event_id is not None else []
@@ -130,16 +185,24 @@ async def submit_napkin_capture(
     try:
         drafts = provider.generate(observed_at_fallback=observed_at_fallback)
     except (ExecutionNapkinParseError, OcrEngineError) as exc:
-        await enqueue_exception(
-            conn,
-            source="execution-ledger",
-            exception_type="napkin_unrecognized",
-            category="needs_human",
-            reason=str(exc),
-            correlation_id=correlation_id,
-            raw_ref=evidence_id,
-            contract_name=None,
-        )
+        # Same durability concern as the evidence save above: this record
+        # must survive the ApiError raised right below, which rolls back
+        # the route's shared `conn`. raw_ref is deliberately None -- that
+        # column is a real FK to raw_snapshots (id), a different table
+        # than execution_napkin_evidence, and there is no schema support
+        # for a real FK to the latter; correlation_id is how a human finds
+        # the right evidence row instead of a wrong/mismatched raw_ref.
+        async with request.app.state.engine.begin() as exc_conn:
+            await enqueue_exception(
+                exc_conn,
+                source="execution-ledger",
+                exception_type="napkin_unrecognized",
+                category="needs_human",
+                reason=str(exc),
+                correlation_id=correlation_id,
+                raw_ref=None,
+                contract_name=None,
+            )
         raise ApiError(status_code=422, code="napkin_unrecognized", message=str(exc)) from exc
 
     stored: list[ExecutionFact] = []
@@ -147,8 +210,25 @@ async def submit_napkin_capture(
         await store_execution_fact(conn, fact)
         stored.append(fact)
         event_type = map_to_reputation_event_type(fact.deviation_category, fact.culprit_type)
-        if event_type is not None and fact.culprit_vendor_id is not None:
-            if body.reputation_ttl_days is None:
+        if event_type is not None:
+            if fact.culprit_vendor_id is None:
+                # The OCR-reported vendor name didn't resolve against any
+                # of this tender's lock-in requirements -- surface the gap
+                # rather than silently dropping a reputation-worthy event.
+                await enqueue_exception(
+                    conn,
+                    source="execution-ledger",
+                    exception_type="vendor_reputation_unresolved_vendor",
+                    category="needs_human",
+                    reason=(
+                        f"vendor culprit {fact.culprit_vendor_name!r} on tender {tender_id} did not resolve to "
+                        f"any lock-in requirement's vendor_id; reputation event ({event_type}) not reported"
+                    ),
+                    correlation_id=correlation_id,
+                    raw_ref=None,
+                    contract_name=None,
+                )
+            elif body.reputation_ttl_days is None:
                 # TBD-TIS-01 (INV-17): no approved TTL number exists for a
                 # real reputation/qualification-class fact -- surface the
                 # gap rather than guess one, hard ban #3.
@@ -162,7 +242,7 @@ async def submit_napkin_capture(
                         "reputation_ttl_days was not supplied (TBD-TIS-01)"
                     ),
                     correlation_id=correlation_id,
-                    raw_ref=evidence_id,
+                    raw_ref=None,
                     contract_name=None,
                 )
             else:
@@ -177,15 +257,15 @@ async def submit_napkin_capture(
                         ttl_days=body.reputation_ttl_days,
                         client=vendor_http_client,
                     )
-                except VendorApiError:
+                except VendorApiError as exc:
                     await enqueue_exception(
                         conn,
                         source="execution-ledger",
                         exception_type="vendor_reputation_feed_failed",
                         category="needs_human",
-                        reason=f"could not report reputation fact for vendor {fact.culprit_vendor_id}",
+                        reason=f"could not report reputation fact for vendor {fact.culprit_vendor_id}: {exc}",
                         correlation_id=correlation_id,
-                        raw_ref=evidence_id,
+                        raw_ref=None,
                         contract_name=None,
                     )
 
@@ -227,4 +307,22 @@ async def get_execution_facts(
     identity: Identity = Depends(require_permission("decision.execution_facts.read", get_current_identity)),
 ) -> ExecutionFactListResponse:
     facts = await list_execution_facts_by_tender(conn, tender_id=tender_id)
-    return ExecutionFactListResponse(items=facts)
+    return ExecutionFactListResponse(
+        items=[
+            ExecutionFactRecordResponse(
+                id=f["id"],
+                tender_id=f["tender_id"],
+                boqline_source_line_id=f["boqline_source_line_id"],
+                planned_qty=str(f["planned_qty"]) if f["planned_qty"] is not None else None,
+                actual_qty=str(f["actual_qty"]) if f["actual_qty"] is not None else None,
+                deviation_reason=f["deviation_reason"],
+                deviation_category=f["deviation_category"],
+                culprit_type=f["culprit_type"],
+                culprit_vendor_name=f["culprit_vendor_name"],
+                culprit_vendor_id=f["culprit_vendor_id"],
+                evidence_source=f["evidence_source"],
+                observed_at=f["observed_at"].isoformat(),
+            )
+            for f in facts
+        ]
+    )
