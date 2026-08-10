@@ -12,7 +12,7 @@ import json
 import pytest
 
 from packages.vendor.napkin_provider import NapkinOcrProvider, NapkinParseError
-from packages.vendor.ocr_engine import OcrEngine
+from packages.platform.ocr_engine import OcrEngine
 
 AS_OF = "2026-08-08T00:00:00+00:00"
 

@@ -40,7 +40,8 @@ from __future__ import annotations
 
 import json
 
-from .ocr_engine import OcrEngine
+from packages.platform.ocr_engine import OcrEngine
+
 from .vendor_model import Offer, Vendor
 
 NAPKIN_EXTRACTION_PROMPT = (

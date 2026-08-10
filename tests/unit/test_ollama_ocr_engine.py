@@ -13,8 +13,8 @@ import json
 import httpx
 import pytest
 
-from packages.vendor.ocr_engine import OcrEngineError
-from packages.vendor.ollama_ocr_engine import OllamaOcrEngine
+from packages.platform.ocr_engine import OcrEngineError
+from packages.platform.ollama_ocr_engine import OllamaOcrEngine
 
 
 def test_requires_an_explicit_model_name():
