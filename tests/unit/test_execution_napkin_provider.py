@@ -203,6 +203,25 @@ def test_generate_raises_on_unknown_culprit_type():
         provider.generate(observed_at_fallback="2026-08-09T00:00:00+00:00")
 
 
+def test_generate_raises_on_non_numeric_actual_qty():
+    payload = {
+        "observations": [
+            {
+                "line_description": None,
+                "actual_qty": "not-a-number",
+                "deviation_reason": "used more rebar than planned",
+                "deviation_category": None,
+                "culprit_type": "internal",
+                "culprit_vendor_name": None,
+                "observed_at": "2026-08-10T00:00:00+00:00",
+            }
+        ]
+    }
+    provider = _provider(payload)
+    with pytest.raises(ExecutionNapkinParseError, match="actual_qty"):
+        provider.generate(observed_at_fallback="2026-08-09T00:00:00+00:00")
+
+
 def test_generate_raises_when_vendor_culprit_has_no_name():
     payload = {
         "observations": [

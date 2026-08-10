@@ -17,7 +17,7 @@ photo/voice note has been run through a real model in this session."""
 from __future__ import annotations
 
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from packages.platform.ocr_engine import OcrEngine
@@ -108,12 +108,20 @@ class ExecutionNapkinProvider:
             actual_qty_raw = obs.get("actual_qty")
             observed_at = obs.get("observed_at") or observed_at_fallback
 
+            if actual_qty_raw is None:
+                actual_qty = None
+            else:
+                try:
+                    actual_qty = Decimal(str(actual_qty_raw))
+                except (TypeError, ValueError, InvalidOperation) as exc:
+                    raise ExecutionNapkinParseError(f"observation has a non-numeric 'actual_qty': {actual_qty_raw!r}") from exc
+
             facts.append(
                 ExecutionFact(
                     tender_id=self._tender_id,
                     boqline_source_line_id=matched_line.source_line_id if matched_line else None,
                     planned_qty=matched_line.qty if matched_line else None,
-                    actual_qty=None if actual_qty_raw is None else Decimal(str(actual_qty_raw)),
+                    actual_qty=actual_qty,
                     deviation_reason=str(deviation_reason),
                     deviation_category=deviation_category,
                     culprit_type=culprit_type,
