@@ -40,10 +40,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from packages.platform.errors import ApiError
 from packages.platform.pagination import decode_cursor, encode_cursor
 from packages.vendor.availability_model import effective_executable_status
 from packages.vendor.reputation_model import NEGATIVE_EVENT_TYPES, POSITIVE_EVENT_TYPES, REPUTATION_EVENT_TYPES, ReputationFact
@@ -149,7 +150,7 @@ async def report_reputation_fact(
     conn: AsyncConnection = Depends(get_connection),
 ) -> dict[str, int]:
     if body.event_type not in REPUTATION_EVENT_TYPES:
-        raise HTTPException(status_code=422, detail=f"unknown event_type: {body.event_type!r}")
+        raise ApiError(status_code=422, code="unknown_event_type", message=f"unknown event_type: {body.event_type!r}")
 
     fact = ReputationFact(
         data_realm="vendor-sandbox",

@@ -239,3 +239,60 @@ def test_generate_raises_when_vendor_culprit_has_no_name():
     provider = _provider(payload)
     with pytest.raises(ExecutionNapkinParseError, match="culprit_vendor_name"):
         provider.generate(observed_at_fallback="2026-08-09T00:00:00+00:00")
+
+
+def test_generate_raises_on_non_string_line_description():
+    payload = {
+        "observations": [
+            {
+                "line_description": 12345,
+                "actual_qty": None,
+                "deviation_reason": "used more rebar than planned",
+                "deviation_category": None,
+                "culprit_type": "internal",
+                "culprit_vendor_name": None,
+                "observed_at": "2026-08-10T00:00:00+00:00",
+            }
+        ]
+    }
+    provider = _provider(payload)
+    with pytest.raises(ExecutionNapkinParseError, match="line_description"):
+        provider.generate(observed_at_fallback="2026-08-09T00:00:00+00:00")
+
+
+def test_generate_raises_on_non_string_culprit_vendor_name():
+    payload = {
+        "observations": [
+            {
+                "line_description": None,
+                "actual_qty": None,
+                "deviation_reason": "late delivery",
+                "deviation_category": None,
+                "culprit_type": "vendor",
+                "culprit_vendor_name": 12345,
+                "observed_at": "2026-08-10T00:00:00+00:00",
+            }
+        ]
+    }
+    provider = _provider(payload)
+    with pytest.raises(ExecutionNapkinParseError, match="culprit_vendor_name"):
+        provider.generate(observed_at_fallback="2026-08-09T00:00:00+00:00")
+
+
+def test_generate_raises_on_non_iso8601_observed_at():
+    payload = {
+        "observations": [
+            {
+                "line_description": None,
+                "actual_qty": None,
+                "deviation_reason": "used more rebar than planned",
+                "deviation_category": None,
+                "culprit_type": "internal",
+                "culprit_vendor_name": None,
+                "observed_at": "10.08.2026",
+            }
+        ]
+    }
+    provider = _provider(payload)
+    with pytest.raises(ExecutionNapkinParseError, match="observed_at"):
+        provider.generate(observed_at_fallback="2026-08-09T00:00:00+00:00")

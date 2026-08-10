@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from packages.decision.execution_napkin_evidence import get_execution_napkin_evidence, save_execution_napkin_evidence
 from packages.tender.normalized import get_or_create_tender
 

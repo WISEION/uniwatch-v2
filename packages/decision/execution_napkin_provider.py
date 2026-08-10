@@ -17,6 +17,7 @@ photo/voice note has been run through a real model in this session."""
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -82,6 +83,11 @@ class ExecutionNapkinProvider:
             if not isinstance(obs, dict):
                 raise ExecutionNapkinParseError(f"observation is not an object: {obs!r}")
 
+            for key in ("line_description", "culprit_vendor_name"):
+                v = obs.get(key)
+                if v is not None and not isinstance(v, str):
+                    raise ExecutionNapkinParseError(f"observation has a non-string {key!r}: {v!r}")
+
             deviation_reason = obs.get("deviation_reason")
             if not deviation_reason:
                 raise ExecutionNapkinParseError(f"observation is missing a non-empty 'deviation_reason': {obs!r}")
@@ -107,6 +113,10 @@ class ExecutionNapkinProvider:
 
             actual_qty_raw = obs.get("actual_qty")
             observed_at = obs.get("observed_at") or observed_at_fallback
+            try:
+                datetime.fromisoformat(observed_at)
+            except (TypeError, ValueError) as exc:
+                raise ExecutionNapkinParseError(f"observation has a non-ISO-8601 'observed_at': {observed_at!r}") from exc
 
             if actual_qty_raw is None:
                 actual_qty = None

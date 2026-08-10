@@ -77,3 +77,4 @@ async def test_post_reputation_fact_rejects_unknown_event_type(client, engine):
         },
     )
     assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unknown_event_type"

@@ -8,19 +8,19 @@ from packages.decision.execution_fact_model import CULPRIT_TYPES, DEVIATION_CATE
 
 
 def _fact(**overrides) -> ExecutionFact:
-    defaults = dict(
-        tender_id=1,
-        boqline_source_line_id=501,
-        planned_qty=Decimal("10"),
-        actual_qty=Decimal("15"),
-        deviation_reason="crane did not arrive, half-day idle",
-        deviation_category="downtime",
-        culprit_type="vendor",
-        culprit_vendor_name="Acme Crane Co",
-        culprit_vendor_id=42,
-        evidence_source="napkin-ocr:1",
-        observed_at="2026-08-10T00:00:00+00:00",
-    )
+    defaults = {
+        "tender_id": 1,
+        "boqline_source_line_id": 501,
+        "planned_qty": Decimal("10"),
+        "actual_qty": Decimal("15"),
+        "deviation_reason": "crane did not arrive, half-day idle",
+        "deviation_category": "downtime",
+        "culprit_type": "vendor",
+        "culprit_vendor_name": "Acme Crane Co",
+        "culprit_vendor_id": 42,
+        "evidence_source": "napkin-ocr:1",
+        "observed_at": "2026-08-10T00:00:00+00:00",
+    }
     defaults.update(overrides)
     return ExecutionFact(**defaults)
 

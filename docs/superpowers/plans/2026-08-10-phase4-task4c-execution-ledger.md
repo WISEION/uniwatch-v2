@@ -897,9 +897,7 @@ def test_generate_resolves_vendor_culprit_to_a_vendor_id():
             }
         ]
     }
-    provider = _provider(
-        payload, lock_ins=[{"boqline_source_line_id": 1, "vendor_id": 42, "vendor_name": "Acme Crane Co"}]
-    )
+    provider = _provider(payload, lock_ins=[{"boqline_source_line_id": 1, "vendor_id": 42, "vendor_name": "Acme Crane Co"}])
     facts = provider.generate(observed_at_fallback="2026-08-09T00:00:00+00:00")
 
     assert facts[0].culprit_vendor_id == 42
@@ -1284,11 +1282,15 @@ async def test_post_reputation_fact_persists_it(client, engine):
 
     async with engine.begin() as conn:
         row = (
-            await conn.execute(
-                text("SELECT event_type, project_ref FROM vendor_reputation_facts WHERE vendor_id = :v"),
-                {"v": vendor_id},
+            (
+                await conn.execute(
+                    text("SELECT event_type, project_ref FROM vendor_reputation_facts WHERE vendor_id = :v"),
+                    {"v": vendor_id},
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert row["event_type"] == "missed_deadline"
     assert row["project_ref"] == "99"
 
@@ -1347,10 +1349,10 @@ async def test_report_reputation_fact_round_trips_over_real_http(engine, _databa
 
     async with engine.begin() as conn:
         row = (
-            await conn.execute(
-                text("SELECT event_type FROM vendor_reputation_facts WHERE vendor_id = :v"), {"v": vendor_id}
-            )
-        ).mappings().one()
+            (await conn.execute(text("SELECT event_type FROM vendor_reputation_facts WHERE vendor_id = :v"), {"v": vendor_id}))
+            .mappings()
+            .one()
+        )
     assert row["event_type"] == "quality_complaint"
 ```
 
@@ -1713,9 +1715,7 @@ async def test_list_execution_facts_returns_stored_facts(client, pm_user, tender
             ),
         )
 
-    response = await client.get(
-        f"/tenders/{tender_with_boq_and_lock_in}/execution-facts", headers={"X-User": pm_user}
-    )
+    response = await client.get(f"/tenders/{tender_with_boq_and_lock_in}/execution-facts", headers={"X-User": pm_user})
     assert response.status_code == 200
     body = response.json()
     assert len(body["items"]) == 1
@@ -2092,11 +2092,15 @@ async def test_store_overhead_buffer_contribution(engine):
             conn, tender_id=tender_id, deviation_category="downtime", fact_count=3, contributed_at="2026-08-10T00:00:00+00:00"
         )
         row = (
-            await conn.execute(
-                text("SELECT tender_id, deviation_category, fact_count FROM overhead_buffer_contributions WHERE id = :id"),
-                {"id": contribution_id},
+            (
+                await conn.execute(
+                    text("SELECT tender_id, deviation_category, fact_count FROM overhead_buffer_contributions WHERE id = :id"),
+                    {"id": contribution_id},
+                )
             )
-        ).mappings().one()
+            .mappings()
+            .one()
+        )
     assert row["tender_id"] == tender_id
     assert row["deviation_category"] == "downtime"
     assert row["fact_count"] == 3
@@ -2105,31 +2109,59 @@ async def test_store_overhead_buffer_contribution(engine):
 async def test_list_execution_facts_by_organization_voen_matches_across_tenders(engine):
     async with engine.begin() as conn:
         snapshot_id = await save_raw_snapshot(
-            conn, source="etender", resource_type="etender.event_details", identity_key="test-4c-org-1",
-            raw_body=b"{}", contract_version="etender.event_details", correlation_id="test-4c-org-1",
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="test-4c-org-1",
+            raw_body=b"{}",
+            contract_version="etender.event_details",
+            correlation_id="test-4c-org-1",
         )
         tender_a = await get_or_create_tender(conn, source="etender", identity_key="test-4c-org-1")
         await create_normalized_version(
-            conn, tender_id=tender_a, raw_snapshot_id=snapshot_id, parser_version="v1",
+            conn,
+            tender_id=tender_a,
+            raw_snapshot_id=snapshot_id,
+            parser_version="v1",
             normalized_fields={"organization_voen": "1000000001"},
         )
         await store_execution_fact(
             conn,
-            _fact(tender_a, culprit_type="customer", culprit_vendor_name=None, culprit_vendor_id=None, deviation_category="preliminaries"),
+            _fact(
+                tender_a,
+                culprit_type="customer",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                deviation_category="preliminaries",
+            ),
         )
 
         snapshot_id_2 = await save_raw_snapshot(
-            conn, source="etender", resource_type="etender.event_details", identity_key="test-4c-org-2",
-            raw_body=b"{}", contract_version="etender.event_details", correlation_id="test-4c-org-2",
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="test-4c-org-2",
+            raw_body=b"{}",
+            contract_version="etender.event_details",
+            correlation_id="test-4c-org-2",
         )
         tender_b = await get_or_create_tender(conn, source="etender", identity_key="test-4c-org-2")
         await create_normalized_version(
-            conn, tender_id=tender_b, raw_snapshot_id=snapshot_id_2, parser_version="v1",
+            conn,
+            tender_id=tender_b,
+            raw_snapshot_id=snapshot_id_2,
+            parser_version="v1",
             normalized_fields={"organization_voen": "9999999999"},
         )
         await store_execution_fact(
             conn,
-            _fact(tender_b, culprit_type="customer", culprit_vendor_name=None, culprit_vendor_id=None, deviation_category="preliminaries"),
+            _fact(
+                tender_b,
+                culprit_type="customer",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                deviation_category="preliminaries",
+            ),
         )
 
         result = await list_execution_facts_by_organization_voen(conn, organization_voen="1000000001")
@@ -2149,16 +2181,21 @@ async def test_execution_summary_reports_the_delta(client, pm_user, tender_with_
         await store_execution_fact(
             conn,
             ExecutionFact(
-                tender_id=tender_with_boq_and_lock_in, boqline_source_line_id=501, planned_qty=Decimal("10"),
-                actual_qty=Decimal("15"), deviation_reason="more rebar used", deviation_category="rework",
-                culprit_type="internal", culprit_vendor_name=None, culprit_vendor_id=None,
-                evidence_source="napkin-ocr:1", observed_at="2026-08-10T00:00:00+00:00",
+                tender_id=tender_with_boq_and_lock_in,
+                boqline_source_line_id=501,
+                planned_qty=Decimal("10"),
+                actual_qty=Decimal("15"),
+                deviation_reason="more rebar used",
+                deviation_category="rework",
+                culprit_type="internal",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                evidence_source="napkin-ocr:1",
+                observed_at="2026-08-10T00:00:00+00:00",
             ),
         )
 
-    response = await client.get(
-        f"/tenders/{tender_with_boq_and_lock_in}/execution-summary", headers={"X-User": pm_user}
-    )
+    response = await client.get(f"/tenders/{tender_with_boq_and_lock_in}/execution-summary", headers={"X-User": pm_user})
     assert response.status_code == 200
     body = response.json()
     assert body["plan_fact_deltas"][0]["delta"] == "5"
@@ -2173,26 +2210,35 @@ async def test_close_project_persists_overhead_buffer_contributions(client, pm_u
         await store_execution_fact(
             conn,
             ExecutionFact(
-                tender_id=tender_with_boq_and_lock_in, boqline_source_line_id=None, planned_qty=None,
-                actual_qty=None, deviation_reason="site handover delayed", deviation_category="preliminaries",
-                culprit_type="customer", culprit_vendor_name=None, culprit_vendor_id=None,
-                evidence_source="napkin-ocr:2", observed_at="2026-08-10T00:00:00+00:00",
+                tender_id=tender_with_boq_and_lock_in,
+                boqline_source_line_id=None,
+                planned_qty=None,
+                actual_qty=None,
+                deviation_reason="site handover delayed",
+                deviation_category="preliminaries",
+                culprit_type="customer",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                evidence_source="napkin-ocr:2",
+                observed_at="2026-08-10T00:00:00+00:00",
             ),
         )
 
-    response = await client.post(
-        f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-User": pm_user}
-    )
+    response = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-User": pm_user})
     assert response.status_code == 200
     assert response.json()["deviation_category_counts"]["preliminaries"] == 1
 
     async with engine.begin() as conn:
         rows = (
-            await conn.execute(
-                text("SELECT deviation_category, fact_count FROM overhead_buffer_contributions WHERE tender_id = :t"),
-                {"t": tender_with_boq_and_lock_in},
+            (
+                await conn.execute(
+                    text("SELECT deviation_category, fact_count FROM overhead_buffer_contributions WHERE tender_id = :t"),
+                    {"t": tender_with_boq_and_lock_in},
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
     assert any(r["deviation_category"] == "preliminaries" and r["fact_count"] == 1 for r in rows)
 ```
 

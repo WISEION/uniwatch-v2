@@ -358,6 +358,103 @@ async def test_napkin_unrecognized_still_persists_evidence_and_exception(
         assert exception_rows[0]["raw_ref"] is None  # raw_ref is a raw_snapshots FK -- never evidence_id (item 2)
 
 
+async def test_two_unrelated_napkin_failures_on_the_same_tender_produce_two_exception_rows(
+    client, tender_app, pm_user, tender_with_boq_and_lock_in, engine
+):
+    # Final-review fix: correlation_id must come from the real ambient
+    # per-request id (CorrelationIdMiddleware), not a synthetic
+    # per-tender string -- otherwise enqueue_exception's get-or-create by
+    # (source, exception_type, correlation_id, status='open') silently
+    # merges a second, unrelated failure into the first still-open row.
+    tender_app.state.ocr_engine = FakeOcrEngine("this is not valid json")
+    first = await client.post(
+        f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
+        json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes-1").decode()},
+        headers={"X-Dev-User": pm_user},
+    )
+    assert first.status_code == 422
+
+    tender_app.state.ocr_engine = FakeOcrEngine(json.dumps({"not_observations": []}))
+    second = await client.post(
+        f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
+        json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes-2").decode()},
+        headers={"X-Dev-User": pm_user},
+    )
+    assert second.status_code == 422
+
+    async with engine.connect() as conn:
+        exception_rows = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT reason, correlation_id FROM exception_queue "
+                        "WHERE exception_type = 'napkin_unrecognized' ORDER BY id"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert len(exception_rows) == 2, "each distinct failure must get its own exception_queue row, not be merged"
+        assert exception_rows[0]["correlation_id"] != exception_rows[1]["correlation_id"]
+        assert "not valid JSON" in exception_rows[0]["reason"]
+        assert "observations" in exception_rows[1]["reason"]
+
+
+async def test_photo_submission_with_malformed_observed_at_is_422_and_durably_queued(
+    client, tender_app, pm_user, tender_with_boq_and_lock_in, engine
+):
+    # Critical #2: an OCR/LLM-supplied non-ISO-8601 observed_at must never
+    # reach datetime.fromisoformat(...) inside store_execution_fact
+    # uncaught -- it must be caught as ExecutionNapkinParseError, same
+    # 422 + durable exception-queue-row shape as the JSON-parse-failure
+    # case above (INV-18: evidence and the failure reason both survive
+    # the request-level rollback).
+    ocr_payload = {
+        "observations": [
+            {
+                "line_description": "Rebar 12mm",
+                "actual_qty": 15,
+                "deviation_reason": "used more rebar than planned",
+                "deviation_category": None,
+                "culprit_type": "internal",
+                "culprit_vendor_name": None,
+                "observed_at": "10.08.2026",
+            }
+        ]
+    }
+    tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
+
+    response = await client.post(
+        f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
+        json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes").decode()},
+        headers={"X-Dev-User": pm_user},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "napkin_unrecognized"
+
+    async with engine.connect() as conn:
+        evidence_rows = (
+            (
+                await conn.execute(
+                    text("SELECT id FROM execution_napkin_evidence WHERE tender_id = :t"),
+                    {"t": tender_with_boq_and_lock_in},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert len(evidence_rows) == 1, "evidence must be durable even though the request 422s (INV-18)"
+
+        exception_rows = (
+            (await conn.execute(text("SELECT reason FROM exception_queue WHERE exception_type = 'napkin_unrecognized'")))
+            .mappings()
+            .all()
+        )
+        assert len(exception_rows) == 1
+        assert "observed_at" in exception_rows[0]["reason"]
+
+
 async def test_photo_submission_with_internal_culprit_stores_fact_without_reputation_call(
     client, tender_app, pm_user, tender_with_boq_and_lock_in, engine
 ):
@@ -623,3 +720,155 @@ async def test_close_project_persists_overhead_buffer_contributions(client, pm_u
             .all()
         )
     assert any(r["deviation_category"] == "preliminaries" and r["fact_count"] == 1 for r in rows)
+
+
+async def test_close_project_is_not_idempotent_second_call_rejected(client, pm_user, tender_with_boq_and_lock_in, engine):
+    # Final-review fix: overhead_buffer_contributions is append-only, so a
+    # second close-project on the same tender must be rejected rather than
+    # silently inserting a duplicate set of rows and doubling this
+    # project's contribution to Phase 4.D's future calibration input.
+    from packages.decision.execution_fact_model import ExecutionFact
+    from packages.decision.execution_ledger_store import store_execution_fact
+
+    async with engine.begin() as conn:
+        await store_execution_fact(
+            conn,
+            ExecutionFact(
+                tender_id=tender_with_boq_and_lock_in,
+                boqline_source_line_id=None,
+                planned_qty=None,
+                actual_qty=None,
+                deviation_reason="site handover delayed",
+                deviation_category="preliminaries",
+                culprit_type="customer",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                evidence_source="napkin-ocr:3",
+                observed_at="2026-08-10T00:00:00+00:00",
+            ),
+        )
+
+    first = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-Dev-User": pm_user})
+    assert first.status_code == 200
+
+    async with engine.begin() as conn:
+        rows_after_first = (
+            (
+                await conn.execute(
+                    text("SELECT id FROM overhead_buffer_contributions WHERE tender_id = :t"),
+                    {"t": tender_with_boq_and_lock_in},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    count_after_first = len(rows_after_first)
+    assert count_after_first > 0
+
+    second = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-Dev-User": pm_user})
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "project_already_closed"
+
+    async with engine.begin() as conn:
+        rows_after_second = (
+            (
+                await conn.execute(
+                    text("SELECT id FROM overhead_buffer_contributions WHERE tender_id = :t"),
+                    {"t": tender_with_boq_and_lock_in},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    assert len(rows_after_second) == count_after_first, "a rejected second close must not insert any additional rows"
+
+
+async def test_organization_execution_history_route_returns_matching_facts_and_requires_auth(client, pm_user, engine):
+    from packages.decision.execution_fact_model import ExecutionFact
+    from packages.decision.execution_ledger_store import store_execution_fact
+    from packages.tender.normalized import create_normalized_version, get_or_create_tender
+    from packages.tender.raw_snapshot import save_raw_snapshot
+
+    # Same two-tenders-two-VOENs setup as
+    # tests/integration/test_execution_ledger_store.py's
+    # test_list_execution_facts_by_organization_voen_matches_across_tenders,
+    # but driven through the real HTTP route instead of the store function.
+    async with engine.begin() as conn:
+        snapshot_a = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="test-4c-org-route-a",
+            raw_body=b"{}",
+            contract_version="etender.event_details",
+            correlation_id="test-4c-org-route-a",
+        )
+        tender_a = await get_or_create_tender(conn, source="etender", identity_key="test-4c-org-route-a")
+        await create_normalized_version(
+            conn,
+            tender_id=tender_a,
+            raw_snapshot_id=snapshot_a,
+            parser_version="v1",
+            normalized_fields={"id": 900001, "organization_voen": "1234567890"},
+        )
+
+        snapshot_b = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="test-4c-org-route-b",
+            raw_body=b"{}",
+            contract_version="etender.event_details",
+            correlation_id="test-4c-org-route-b",
+        )
+        tender_b = await get_or_create_tender(conn, source="etender", identity_key="test-4c-org-route-b")
+        await create_normalized_version(
+            conn,
+            tender_id=tender_b,
+            raw_snapshot_id=snapshot_b,
+            parser_version="v1",
+            normalized_fields={"id": 900002, "organization_voen": "9999999999"},
+        )
+
+        await store_execution_fact(
+            conn,
+            ExecutionFact(
+                tender_id=tender_a,
+                boqline_source_line_id=None,
+                planned_qty=None,
+                actual_qty=None,
+                deviation_reason="site handover delayed by client",
+                deviation_category="preliminaries",
+                culprit_type="customer",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                evidence_source="napkin-ocr:org-route-a",
+                observed_at="2026-08-10T00:00:00+00:00",
+            ),
+        )
+        await store_execution_fact(
+            conn,
+            ExecutionFact(
+                tender_id=tender_b,
+                boqline_source_line_id=None,
+                planned_qty=None,
+                actual_qty=None,
+                deviation_reason="other buyer delayed handover",
+                deviation_category="preliminaries",
+                culprit_type="customer",
+                culprit_vendor_name=None,
+                culprit_vendor_id=None,
+                evidence_source="napkin-ocr:org-route-b",
+                observed_at="2026-08-10T00:00:00+00:00",
+            ),
+        )
+
+    unauth_response = await client.get("/organizations/1234567890/execution-history")
+    assert unauth_response.status_code == 401
+
+    response = await client.get("/organizations/1234567890/execution-history", headers={"X-Dev-User": pm_user})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["tender_id"] == tender_a
+    assert body["items"][0]["deviation_reason"] == "site handover delayed by client"

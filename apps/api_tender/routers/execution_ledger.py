@@ -33,6 +33,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.contracts.vendor_api import VendorApiError, report_reputation_fact
@@ -49,6 +50,7 @@ from packages.decision.execution_napkin_evidence import save_execution_napkin_ev
 from packages.decision.execution_napkin_provider import ExecutionNapkinParseError, ExecutionNapkinProvider
 from packages.decision.reputation_feed import map_to_reputation_event_type
 from packages.platform.audit import write_audit_log
+from packages.platform.correlation import get_correlation_id
 from packages.platform.errors import ApiError
 from packages.platform.exception_queue import enqueue_exception
 from packages.platform.ocr_engine import OcrEngine, OcrEngineError
@@ -136,7 +138,7 @@ async def submit_napkin_capture(
     identity: Identity = Depends(require_permission("decision.execution_facts.create", get_current_identity)),
 ) -> NapkinSubmissionResponse:
     raw_bytes = base64.b64decode(body.image_base64)
-    correlation_id = f"execution-ledger-napkin-{tender_id}"
+    correlation_id = get_correlation_id()
 
     # INV-18: evidence capture must never depend on whether the rest of
     # this request succeeds. `conn` (Depends(get_connection)) rolls back
@@ -380,6 +382,21 @@ async def close_project(
     conn: AsyncConnection = Depends(get_connection),
     identity: Identity = Depends(require_permission("decision.execution_facts.close_project", get_current_identity)),
 ) -> ExecutionSummaryResponse:
+    # overhead_buffer_contributions is append-only (no UPDATE/DELETE) --
+    # a second close on an already-closed project would silently double
+    # count this tender's contribution to Phase 4.D's future calibration
+    # input, with no way to detect or repair it later. Reject instead.
+    existing = await conn.execute(
+        text("SELECT 1 FROM overhead_buffer_contributions WHERE tender_id = :tender_id LIMIT 1"),
+        {"tender_id": tender_id},
+    )
+    if existing.first() is not None:
+        raise ApiError(
+            status_code=409,
+            code="project_already_closed",
+            message=f"tender {tender_id} has already been closed",
+        )
+
     summary = await _build_summary(conn, tender_id=tender_id)
     contributed_at = datetime.now(UTC).isoformat()
     for category, count in summary.deviation_category_counts.items():
