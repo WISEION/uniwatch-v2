@@ -822,3 +822,15 @@ Six further gaps recorded, not silently approximated:
 **Source conflict (if any):** None.
 
 **Owner follow-up needed:** Yes, non-blocking for 4.C's merge (already merged). (a) Choose an ASR backend (still open from Phase 3). (b) `TBD-TIS-01` TTL numbers per fact class need an approved value before real field-observation reputation facts can post without human intervention. (c) `D-VND-REP` unchanged. Items 2 and 4 are by design, not follow-ups: item 2 is 4.D's own scope, item 4 is ADR-0005 working as intended.
+
+## 2026-08-11 — Task 4.C, sixth deferred item: `capture_kind`/`mime_type` are not validated at the API level
+
+**Context:** the 2026-08-11 entry above recorded five deferred 4.C items, reconstructed from the task's plan doc. A sixth was found by the review that merged PR #22 but survived only in an unmerged local branch (`docs-worklog-task4c-closure`, commit `c720aeb`) and so was missing from this file. Recorded here so a known defect is not tracked solely in a branch nobody would look at. The paired `WORKLOG.md` addendum of the same date carries the other two salvaged facts (PR #22's maker/checker approval record, and a caveat about which test run the merge actually relied on).
+
+**Deviation/assumption:** `capture_kind` and `mime_type` on the napkin-capture submission route (`apps/api_tender/routers/execution_ledger.py`) are validated **only** by the `CHECK` constraint in `migrations/0016_execution_ledger.sql` — there is no API-level validation of either field. An invalid value therefore surfaces as a 500 (the database error propagates) rather than a clean 4xx, which breaks the convention every other route in this codebase follows: a malformed request is the caller's error and gets a typed `ApiError` through `packages/platform/errors.py`'s uniform envelope.
+
+This was found during the review that merged PR #22 and deliberately left unfixed in that fix wave, judged non-critical relative to the two Critical and four Important findings addressed there: it is the *shape of the response to garbage input*, not data loss, data corruption, or a silent default. Hard ban #3 is not implicated — nothing is hidden behind a fallback; the request fails loudly, just with the wrong status code and an uninformative message.
+
+**Source conflict (if any):** None. No source document specifies the accepted `capture_kind`/`mime_type` sets beyond what the migration's own `CHECK` already encodes — closing this needs no new decision, only the validation wired at the route boundary against the same values the constraint already names.
+
+**Owner follow-up needed:** No decision needed — this is a straightforward correctness fix (validate at the route against the migration's own allowed values, return 422). Low priority: it affects only malformed requests. Worth folding into whichever task next touches that router.
