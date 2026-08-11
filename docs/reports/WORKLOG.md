@@ -1097,3 +1097,52 @@ PASS: v1 untouched (no forbidden path literals, no baseline drift).
 **Дальше:** Task 4.B закрыта end-to-end (детекция изменений → флагирование затронутых BOQ-строк → реальный worker dispatch → человеко-читаемый read API). Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7: задача 4.C (Execution Ledger).
 
 **Блокеры:** нет новых. Оба зафиксированных пробела (Q&A tracking, `resolved_at` clearing) — некритичные, той же дисциплины, что и во всех предыдущих фазах.
+
+## 2026-08-11 — Задание: Phase 4, задача 4.C (Execution Ledger), реализация и слияние (PR #22, subagent-driven, 7 подзадач)
+
+**Запись сделана пост-фактум (`AGENTS.md` §4).** Работа 4.C велась в ветке `worktree-phase4-task4c-execution-ledger`, слита в `master` через PR #22 в 2026-08-11 14:17 UTC, но ни `WORKLOG.md`, ни `docs/decisions/OPEN-QUESTIONS.md` записи о ней не получили — пробел найден при обзоре состояния 2026-08-11 и закрыт этой записью (плюс парной записью в OPEN-QUESTIONS от той же даты). Все факты ниже восстановлены из реальных коммитов ветки, тела PR #22 и плана `docs/superpowers/plans/2026-08-10-phase4-task4c-execution-ledger.md` — ничего не додумано.
+
+**Сделано (по коммитам ветки, в порядке):**
+- `845bec8` — OCR-адаптер (`OcrEngine` Protocol + Ollama-клиент) перенесён из `packages/vendor` в `packages/platform`: второй домен (Execution Ledger в `packages/decision`) теперь тоже его потребитель, а `packages/decision` → `packages/vendor` импорт запрещён (ADR-0001). Общий, не-доменный адаптер — законное место `platform`.
+- `c88db8b` — migration `0016_execution_ledger.sql` (schema version 15→16), модель `ExecutionFact` и стор `execution_ledger_store.py`: атомы P318 (`проект → позиция → план vs факт → причина отклонения → виновник → дата`), append-only.
+- `3b8ebb9` — резолв наблюдений «с салфетки» против уже известных BOQ-строк тендера и уже зафиксированных (lock-in) вендоров, а не против свободного текста.
+- `8b23050` + `c344e24` — OCR-извлечение в черновики `ExecutionFact`; фикс по ревью: `Decimal`-парсинг `actual_qty`, пришедшего из OCR, больше не падает на мусорном значении.
+- `893cddf` — фид репутации вендора из отклонений EL через **реальную сетевую границу ADR-0006**: `packages/contracts/vendor_api.py::report_reputation_fact` + новый `POST /internal/reputation-facts` на `apps/api_vendor`. Только типизированные `ReputationFact` строки, никогда балл — `D-VND-REP` не тронут.
+- `60ecb2c` + `e5427c5` — маршрут приёма салфеточного захвата и read-маршрут execution-facts; фикс по ревью: долговечная запись evidence/exception (не терялась на error-путях), корректный `raw_ref`, покрытие OCR-пути тестами.
+- `5617e65` — закрытие проекта (`POST /tenders/{tender_id}/close-project`) → сводка дельты план/факт по строкам + **сырой (не взвешенный по деньгам) вклад в исторический буфер накладных** по категориям отклонений, плюс read-маршрут истории исполнения заказчика по VOEN организации.
+- **Финальный ревью всей ветки нашёл 2 Critical + 4 Important, все исправлены (`a2519b7`, `5fb8e45`):**
+  - **C1**: транзакция запроса откатывалась на error-пути и молча уносила «долговечно сохранённые» napkin-evidence/exception-строки.
+  - **C2**: два непойманных краш-пути на недоверенном OCR-выводе (`line_description`/`culprit_vendor_name`/`observed_at` не-строка / не-ISO-8601) обходили ту же дисциплину долговечности — теперь `ExecutionNapkinParseError` → 422 + строка в exception queue, а не `AttributeError`/`ValueError`.
+  - **I1**: синтетический per-tender `correlation_id` вместо реального ambient (`get_correlation_id()`) ломал dedup exception-queue, сливая несвязанные сбои.
+  - **I2**: `enqueue_exception`'s get-or-create ключ `(source, exception_type, correlation_id)` — все факты из одной napkin-подачи делили один correlation_id, поэтому второй *другой* vendor-culprit факт с тем же `exception_type` молча схлопывался в первую ещё открытую строку (hard ban #3). Разведены per-fact суффиксом, реальный correlation_id остался находимым префиксом.
+  - **I3**: `POST .../close-project` не был идемпотентен — повторный вызов двойным счётом бил в `overhead_buffer_contributions`; теперь 409.
+  - **I4**: bare `HTTPException` в vendor-сервисе ломал единый error envelope → `ApiError`. Плюс добавлено отсутствовавшее route-level покрытие `GET /organizations/{voen}/execution-history`.
+  - Отдельным фиксом (`5fb8e45`): `submit_napkin_capture`/`close_project` вообще не проверяли, что тендер уже решён — §7.3/P318 скопит EL только на `bid`/`conditional_bid` тендер, а никогда-не-решённый или `no_bid` мог принимать факты и закрываться. Добавлен `get_latest_decision_type()` и гейт на обоих маршрутах (409 `tender_not_decided_bid`).
+
+**Вывод полного прогона (на типе ветки перед слиянием, из тела PR #22):**
+```
+$ python -m pytest tests/ -q -m "not live_network"
+549 passed, 33 skipped
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps
+clean / All checks passed! / Success: no issues found in 96 source files
+$ python tools/check_v1_untouched.py
+PASS
+```
+
+**Осознанно НЕ построено (перенесено в `docs/decisions/OPEN-QUESTIONS.md`, 2026-08-11):** ASR (голос) по-прежнему не выбранный tech choice — `'voice'` захват принимается и байты хранятся безусловно (INV-18), но маршрут возвращает `parsed: false`, никогда угаданный транскрипт; *применение* буфера накладных (превращение сырых счётчиков в реальный overlay на смету 4.A) — это 4.D/P319, здесь только сырые счётчики; `D-VND-REP` не тронут; нет автоматической связи `execution-history` → `GoNoGoInputs.customer_reputation_notes` (ADR-0005: человек читает историю и пишет свою оценку сам); `TBD-TIS-01` (точные TTL по классам фактов, INV-17) не решён — `reputation_ttl_days` без дефолта, неуказанное значение уходит человеку в exception queue, а не постится угаданным числом; нет end-to-end интеграционного теста, гоняющего реальный vendor-culprit факт через OCR до успешного reputation-post (тот же честный пробел, что уже есть у napkin-ingestion в `packages/vendor`).
+
+**Дальше:** 4.C закрыта и слита. Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7 — задача 4.D (Calibration loop, P319), последняя задача Phase 4 перед воротами Phase 4.
+
+**Блокеры:** нет новых.
+
+## 2026-08-11 — Рефакторинг: дублированный bootstrap двух сервисов собран в `packages/platform/app_factory.py` (PR #25)
+
+**Сделано:**
+- `apps/api_tender/main.py` и `apps/api_vendor/main.py` руками дублировали одну и ту же последовательность сборки приложения (settings, logging, ранняя инициализация engine, lifespan-закрытие, correlation-id middleware, error handlers); `apps/*/deps.py` дублировали идентичный `get_connection`; `apps/*/routers/health.py` дублировали идентичный liveness/readiness роутер байт-в-байт (различался только docstring). Новый `packages/platform/app_factory.py` — единственное место, где эта последовательность живёт.
+- **Граница ADR-0006 не изменилась:** каждый `main.py` по-прежнему вызывает `build_app()` один раз, из точки входа своего собственного процесса — это два независимо разворачиваемых процесса, а не два роутера на одном приложении. ADR-0006 требует раздельного развёртывания, а не двух копий generic-обвязки, поддерживаемых вручную.
+- `deps.py` в обоих приложениях реэкспортируют `get_connection` из общего модуля; auth-специфичные зависимости (`get_current_identity`, `get_current_vendor_id` и т.д.) остались на месте — они реально различаются по сервисам.
+- Итого −199/+147 строк на 8 файлах; ни одной новой поведенческой строки.
+
+**Дальше:** PR #25 открыт. Fast gate — pass, Full gate — в процессе на момент этой записи, `live-fetch` — fail (best-effort, не required: `etender.gov.az` недостижим с GitHub-hosted раннеров, зафиксировано в `.github/workflows/ci.yml`). Слияние — только по зелёному Full gate, через PR (master защищён).
+
+**Блокеры:** нет.
