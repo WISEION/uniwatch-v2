@@ -11,7 +11,7 @@ from packages.platform.settings import Settings
 
 @pytest_asyncio.fixture
 async def client(engine, _database_url, migrated_asyncpg_dsn):
-    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    settings = Settings(database_url=_database_url)
     app = create_app(settings)
     app.state.engine = engine
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)

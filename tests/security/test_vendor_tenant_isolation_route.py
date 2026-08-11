@@ -18,7 +18,7 @@ AS_OF = "2026-08-06T00:00:00+00:00"
 
 @pytest_asyncio.fixture
 async def client(engine, _database_url, migrated_asyncpg_dsn):
-    settings = Settings(database_url=_database_url, expected_schema_version=10)
+    settings = Settings(database_url=_database_url)
     app = create_app(settings)
     app.state.engine = engine
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)

@@ -16,7 +16,7 @@ from packages.vendor.vendor_store import store_offer, store_vendor
 
 
 async def test_internal_offers_pagination_traverses_all_pages_without_gaps_or_dupes(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    settings = Settings(database_url=_database_url)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
@@ -80,7 +80,7 @@ async def test_internal_offers_pagination_traverses_all_pages_without_gaps_or_du
 
 
 async def test_internal_offers_default_limit_returns_no_next_cursor_when_under_page_size(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    settings = Settings(database_url=_database_url)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
