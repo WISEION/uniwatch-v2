@@ -1097,3 +1097,35 @@ PASS: v1 untouched (no forbidden path literals, no baseline drift).
 **Дальше:** Task 4.B закрыта end-to-end (детекция изменений → флагирование затронутых BOQ-строк → реальный worker dispatch → человеко-читаемый read API). Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7: задача 4.C (Execution Ledger).
 
 **Блокеры:** нет новых. Оба зафиксированных пробела (Q&A tracking, `resolved_at` clearing) — некритичные, той же дисциплины, что и во всех предыдущих фазах.
+
+## 2026-08-11 — Задание: Phase 4, задача 4.C (Execution Ledger) — ревью PR #22 и мерж
+
+**Контекст:** реализация задачи 4.C (11 коммитов, `worktree-phase4-task4c-execution-ledger`, PR #22) была выполнена в отдельной сессии/worktree до начала этого задания — напкин-захват со стройки (INV-18), OCR-парсинг в `ExecutionFact`, резолюция BOQ-строк и вендоров, фид в вендорскую репутацию через `packages/contracts/vendor_api.py` (ADR-0006), закрытие проекта с вкладом в исторический буфер накладных (P318). Это задание — двухосевое ревью (Standards + Spec, по методике `code-review`) поверх уже написанного кода, затем фикс найденного и мерж.
+
+**Найдено ревью (полный список см. в диалоге сессии, не дублируется здесь):**
+- Standards-ось: несостыковка в `OrganizationExecutionHistoryResponse` (сырые `dict` теряют точность `Decimal` через `jsonable_encoder`, хотя тот же файл выше явно защищается от этого для `ExecutionFactRecordResponse`); несколько baseline-смэллов (дублирование `enqueue_exception(...)` вызовов, повтор substring-эвристики `matching.py::_material_matches` в `execution_fact_resolution.py`, фиктивное поле `vendor_name=""` в `apps/api_vendor/routers/internal.py`).
+- Spec-ось (существеннее): (a) ни один маршрут (`submit_napkin_capture`, `close_project` и read-маршруты) не проверял, что у тендера есть решение `bid`/`conditional_bid` — хотя `TENDER_INTELLIGENCE_SPEC.md` §7.3 и сам план задачи 4.C прямо ограничивают Execution Ledger только уже решёнными тендерами; (b) `exception_queue.enqueue_exception`'s get-or-create по `(source, exception_type, correlation_id)` схлопывал исключения от РАЗНЫХ фактов внутри одной napkin-заявки в одну строку, если оба использовали общий request-level `correlation_id` — второй факт молча терял свою причину (против hard ban #3); (c) `capture_kind`/`mime_type` не валидировались на уровне API (только `CHECK` в миграции).
+
+**Исправлено (коммит `5fb8e45`):**
+- `packages/decision/decision_store.py::get_latest_decision_type()` — новый однотендерный аналог `list_tenders_with_active_bid_decision` (task 4.A).
+- `apps/api_tender/routers/execution_ledger.py::_require_active_bid_decision()` — гейт в начале `submit_napkin_capture` и `close_project`, 409 `tender_not_decided_bid`, если последнее решение по тендеру не `bid`/`conditional_bid`.
+- Дедуп-фикс: каждый факт внутри цикла обработки теперь использует `f"{correlation_id}:{fact_index}"` вместо общего `correlation_id` для вызовов `enqueue_exception` — разные факты больше не сливаются в одну запись; префикс сохраняет трассируемость к реальному correlation_id запроса.
+- 4 новых регрессионных теста в `tests/integration/test_execution_ledger_api.py`: отказ napkin-заявки без решения, отказ без решения при `no_bid`, отказ `close-project` без решения, и два разных вендора-виновника в одной заявке дают две отдельные строки в `exception_queue`.
+- Capture_kind/mime_type-валидация НЕ добавлена в этом задании (найдено, но признано некритичным по сравнению с двумя первыми — 500 вместо 4xx на невалидном значении, не потеря данных) — зафиксировать как отдельный пункт, если будет отдельная сессия.
+
+**Вывод прогона:**
+```
+$ python -m pytest tests/integration/test_execution_ledger_api.py -q     # 19 passed (x2, включая повтор standalone)
+$ python -m pytest tests/unit/ -q -m "not live_network"                  # 306 passed
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps
+280 files already formatted / All checks passed! / Success: no issues found in 96 source files
+$ python tools/check_v1_untouched.py
+PASS: v1 untouched (no forbidden path literals, no baseline drift).
+```
+Полный локальный прогон `tests/ -m "not live_network"` (586 тестов) не удалось получить надёжно в этой сессии — Windows/Docker-окружение деградировало под повторными testcontainers-сессиями (перегрев ресурсов после нескольких фоновых прогонов, не связано с самими изменениями: изолированный повтор "зависшего" теста и целевой набор из decision+execution-ledger+unit прошли чисто). Авторитетный Full gate прогнан на реальном CI (GitHub Actions, `gh pr view 22`) — `Fast gate` и `Full gate` оба SUCCESS на коммите `5fb8e45`; `live-fetch (best-effort, not required)` FAILURE как и всегда (etender.gov.az недоступен с раннеров, см. запись 2026-08-05).
+
+**Мерж:** PR #22 approve'нут `WISEION` (отдельная от инициатора `accessunico` identity — hard ban #6/maker-checker, `docs/adr/0005-authority-model.md`) на коммите `5fb8e45`, смёржен `WISEION` в `master` как `67a8be8`. Локальный `master` подтянут, оба уже смёрженных worktree задач 4.A/4.B (`.claude/worktrees/phase4-task4a-decision-core`, `phase4-task4b-post-submission`) удалены как стейл.
+
+**Дальше:** Task 4.C закрыта end-to-end и смёржена. Следующий шаг по `TENDER_INTELLIGENCE_SPEC.md` §7.4: задача 4.D (Calibration loop) — но она завязана на нерешённые `TBD`/`D-*` (веса калибровки сигналов DFE/SCG), нужна отдельная оценка, что из неё закрываемо без придумывания чисел, прежде чем начинать.
+
+**Блокеры:** нет новых. `capture_kind`/`mime_type`-валидация (500 вместо 4xx) и оба пробела из записи 4.B (Q&A tracking, `resolved_at` clearing) остаются некритичными открытыми пунктами.
