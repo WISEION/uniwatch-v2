@@ -24,7 +24,7 @@ from packages.vendor.vendor_store import store_offer, store_vendor
 
 
 async def test_internal_offers_reports_positive_reputation_flag(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    settings = Settings(database_url=_database_url)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
@@ -87,7 +87,7 @@ async def test_internal_offers_reports_positive_reputation_flag(engine, _databas
 
 
 async def test_internal_offers_reports_no_reputation_flags_when_no_facts_exist(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    settings = Settings(database_url=_database_url)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
@@ -137,7 +137,7 @@ async def test_internal_offers_reports_no_reputation_flags_when_no_facts_exist(e
 
 
 async def test_internal_offers_reports_negative_reputation_flag(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    settings = Settings(database_url=_database_url)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 

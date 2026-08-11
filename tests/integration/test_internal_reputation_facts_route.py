@@ -12,7 +12,7 @@ from packages.vendor.vendor_store import store_vendor
 
 @pytest_asyncio.fixture
 async def app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    settings = Settings(database_url=_database_url)
     application = create_app(settings)
     application.state.engine = engine
     return application
