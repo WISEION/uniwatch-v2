@@ -204,3 +204,29 @@ async def list_tenders_with_active_bid_decision(conn: AsyncConnection) -> list[i
         .all()
     )
     return [row["tender_id"] for row in rows if row["decision_type"] in ("bid", "conditional_bid")]
+
+
+async def get_latest_decision_type(conn: AsyncConnection, *, tender_id: int) -> str | None:
+    """The single tender-scoped counterpart of
+    list_tenders_with_active_bid_decision, for callers (task 4.C's
+    Execution Ledger) that only need to gate one tender rather than list
+    every tender with an active bid decision. Returns None if the tender
+    has no decision at all -- never a guessed/default decision_type."""
+    row = (
+        (
+            await conn.execute(
+                text(
+                    """
+                SELECT decision_type FROM decisions
+                WHERE tender_id = :tender_id
+                ORDER BY decided_at DESC, id DESC
+                LIMIT 1
+                """
+                ),
+                {"tender_id": tender_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    return row["decision_type"] if row is not None else None

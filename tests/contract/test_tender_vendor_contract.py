@@ -19,7 +19,7 @@ from packages.vendor.vendor_store import store_offer, store_vendor
 
 
 async def test_ping_vendor_service_round_trip_against_the_real_vendor_app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=15)
+    settings = Settings(database_url=_database_url, expected_schema_version=16)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
     transport = httpx.ASGITransport(app=vendor_app, raise_app_exceptions=False)
@@ -36,7 +36,7 @@ async def test_ping_vendor_service_ambient_correlation_id_reaches_the_real_vendo
     # back whatever correlation id it received on the response -- if the
     # client's ambient id didn't reach it, this would echo a freshly
     # minted id instead.
-    settings = Settings(database_url=_database_url, expected_schema_version=15)
+    settings = Settings(database_url=_database_url, expected_schema_version=16)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
     transport = httpx.ASGITransport(app=vendor_app, raise_app_exceptions=False)
@@ -52,7 +52,7 @@ async def test_ping_vendor_service_ambient_correlation_id_reaches_the_real_vendo
 
 
 async def test_list_vendor_offers_round_trip_against_the_real_vendor_app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=15)
+    settings = Settings(database_url=_database_url, expected_schema_version=16)
     vendor_app = create_vendor_app(settings)
     vendor_app.state.engine = engine
 
@@ -96,3 +96,41 @@ async def test_list_vendor_offers_round_trip_against_the_real_vendor_app(engine,
     matching = [r for r in result if r.vendor_id == vendor_id]
     assert len(matching) == 1
     assert matching[0].material == "steel beam"
+
+
+async def test_report_reputation_fact_round_trips_over_real_http(engine, _database_url):
+    from sqlalchemy import text
+
+    from packages.contracts.vendor_api import report_reputation_fact
+    from packages.vendor.vendor_model import Vendor
+    from packages.vendor.vendor_store import store_vendor
+
+    settings = Settings(database_url=_database_url, expected_schema_version=16)
+    vendor_app = create_vendor_app(settings)
+    vendor_app.state.engine = engine
+
+    async with engine.begin() as conn:
+        vendor_id, _api_key = await store_vendor(
+            conn, Vendor(data_realm="vendor-sandbox", watermark="SYNTHETIC", name="Gamma Co", provider_type="test", seed=3)
+        )
+
+    transport = httpx.ASGITransport(app=vendor_app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://vendor-test") as client:
+        await report_reputation_fact(
+            "http://vendor-test",
+            vendor_id=vendor_id,
+            event_type="quality_complaint",
+            project_ref="42",
+            source_ref="napkin-ocr:7",
+            observed_at="2026-08-10T00:00:00+00:00",
+            ttl_days=180,
+            client=client,
+        )
+
+    async with engine.begin() as conn:
+        row = (
+            (await conn.execute(text("SELECT event_type FROM vendor_reputation_facts WHERE vendor_id = :v"), {"v": vendor_id}))
+            .mappings()
+            .one()
+        )
+    assert row["event_type"] == "quality_complaint"

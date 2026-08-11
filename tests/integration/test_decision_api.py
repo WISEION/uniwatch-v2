@@ -34,7 +34,7 @@ DECISION_PERMISSIONS = (
 
 @pytest_asyncio.fixture
 async def tender_app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=15)
+    settings = Settings(database_url=_database_url, expected_schema_version=16)
     app = create_tender_app(settings)
     app.state.engine = engine
     return app
@@ -42,7 +42,7 @@ async def tender_app(engine, _database_url):
 
 @pytest_asyncio.fixture
 async def vendor_app(engine, _database_url):
-    settings = Settings(database_url=_database_url, expected_schema_version=15)
+    settings = Settings(database_url=_database_url, expected_schema_version=16)
     app = create_vendor_app(settings)
     app.state.engine = engine
     return app
@@ -55,7 +55,7 @@ async def client(tender_app, vendor_app):
     tender_app.state.vendor_http_client = vendor_client
     tender_app.state.settings = Settings(
         database_url=tender_app.state.settings.database_url,
-        expected_schema_version=15,
+        expected_schema_version=16,
         vendor_service_base_url="http://vendor-test",
     )
     tender_transport = httpx.ASGITransport(app=tender_app, raise_app_exceptions=False)

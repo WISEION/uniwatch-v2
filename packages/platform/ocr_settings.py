@@ -1,9 +1,11 @@
-"""OCR engine configuration. A separate, minimal dataclass rather than an
-addition to packages/platform/settings.py: OCR is vendor-domain-specific
-config, not a cross-cutting platform concern like DATABASE_URL, so it
-does not belong in the shared platform library both services import
-(CLAUDE.md: "packages/platform ... no domain scoring/business-decision
-logic").
+"""OCR engine configuration. Lives in packages/platform (not a
+vendor-domain package) because a second domain now needs the identical
+OcrEngine Protocol -- packages/decision's Execution Ledger napkin
+ingestion (Phase 4, task 4.C, TENDER_INTELLIGENCE_SPEC.md Section7.3) --
+and packages/decision must never import packages/vendor directly
+(ADR-0001 domain boundary). This is exactly the "cross-cutting...
+shared LIBRARY" packages/platform already is for DATABASE_URL etc.
+(CLAUDE.md), not domain scoring/business-decision logic itself.
 
 `ollama_base_url` defaults to Ollama's own well-known standard local port
 (a fixed product constant, not an invented business value -- the same
