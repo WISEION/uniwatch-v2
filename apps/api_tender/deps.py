@@ -1,24 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 import httpx
 from fastapi import Header, Request
-from sqlalchemy.ext.asyncio import AsyncConnection
 
+from packages.platform.app_factory import get_connection
 from packages.platform.errors import ApiError
 from packages.platform.ocr_engine import OcrEngine
 from packages.platform.rbac.models import Identity
 from packages.platform.rbac.store import resolve_identity
 
-
-async def get_connection(request: Request) -> AsyncIterator[AsyncConnection]:
-    """One connection per request, wrapped in a transaction that commits if
-    the route returns normally and rolls back on any exception — this is
-    what makes idempotency-reserve + mutation + idempotency-store atomic."""
-    engine = request.app.state.engine
-    async with engine.begin() as conn:
-        yield conn
+__all__ = ["get_connection", "get_current_identity", "get_ocr_engine", "get_vendor_http_client"]
 
 
 async def get_current_identity(
