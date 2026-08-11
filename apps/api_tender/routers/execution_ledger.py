@@ -37,7 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.contracts.vendor_api import VendorApiError, report_reputation_fact
-from packages.decision.decision_store import list_lock_in_requirements_by_tender
+from packages.decision.decision_store import get_latest_decision_type, list_lock_in_requirements_by_tender
 from packages.decision.execution_fact_model import ExecutionFact
 from packages.decision.execution_ledger_store import (
     list_execution_facts_by_organization_voen,
@@ -64,6 +64,23 @@ from packages.tender.normalized import get_event_id_for_tender
 from ..deps import get_connection, get_current_identity, get_ocr_engine, get_vendor_http_client
 
 router = APIRouter(prefix="/tenders/{tender_id}", tags=["execution-ledger"])
+
+
+async def _require_active_bid_decision(conn: AsyncConnection, *, tender_id: int) -> None:
+    """TENDER_INTELLIGENCE_SPEC.md Section7.3 and this task's own plan scope
+    the Execution Ledger to a tender that has already been decided bid/
+    conditional_bid -- a never-decided or no_bid tender has no "plan" side
+    for a plan-vs-fact comparison to mean anything. Checked once per
+    mutating route (napkin submission, project close) rather than folded
+    into a generic dependency, since the read routes (list/summary) stay
+    open to any tender_id."""
+    decision_type = await get_latest_decision_type(conn, tender_id=tender_id)
+    if decision_type not in ("bid", "conditional_bid"):
+        raise ApiError(
+            status_code=409,
+            code="tender_not_decided_bid",
+            message=f"tender {tender_id} has no active bid/conditional_bid decision (latest: {decision_type!r})",
+        )
 
 
 class NapkinSubmissionRequest(BaseModel):
@@ -137,6 +154,7 @@ async def submit_napkin_capture(
     ocr_engine_override: OcrEngine | None = Depends(get_ocr_engine),
     identity: Identity = Depends(require_permission("decision.execution_facts.create", get_current_identity)),
 ) -> NapkinSubmissionResponse:
+    await _require_active_bid_decision(conn, tender_id=tender_id)
     raw_bytes = base64.b64decode(body.image_base64)
     correlation_id = get_correlation_id()
 
@@ -215,11 +233,20 @@ async def submit_napkin_capture(
         raise ApiError(status_code=422, code="napkin_unrecognized", message=str(exc)) from exc
 
     stored: list[ExecutionFact] = []
-    for fact in drafts:
+    for fact_index, fact in enumerate(drafts):
         await store_execution_fact(conn, fact)
         stored.append(fact)
         event_type = map_to_reputation_event_type(fact.deviation_category, fact.culprit_type)
         if event_type is not None:
+            # enqueue_exception get-or-creates by (source, exception_type,
+            # correlation_id) -- a single napkin submission can yield
+            # several distinct vendor-culprit facts sharing the one
+            # request-level correlation_id, so a per-fact suffix is needed
+            # here or a second fact's exception would silently collapse
+            # into the first's still-open row (hard ban #3). Still prefixed
+            # by the real correlation_id so a human can find every row for
+            # this request with a LIKE query.
+            fact_correlation_id = f"{correlation_id}:{fact_index}"
             if fact.culprit_vendor_id is None:
                 # The OCR-reported vendor name didn't resolve against any
                 # of this tender's lock-in requirements -- surface the gap
@@ -233,7 +260,7 @@ async def submit_napkin_capture(
                         f"vendor culprit {fact.culprit_vendor_name!r} on tender {tender_id} did not resolve to "
                         f"any lock-in requirement's vendor_id; reputation event ({event_type}) not reported"
                     ),
-                    correlation_id=correlation_id,
+                    correlation_id=fact_correlation_id,
                     raw_ref=None,
                     contract_name=None,
                 )
@@ -250,7 +277,7 @@ async def submit_napkin_capture(
                         f"vendor {fact.culprit_vendor_id} reputation fact ({event_type}) ready but "
                         "reputation_ttl_days was not supplied (TBD-TIS-01)"
                     ),
-                    correlation_id=correlation_id,
+                    correlation_id=fact_correlation_id,
                     raw_ref=None,
                     contract_name=None,
                 )
@@ -273,7 +300,7 @@ async def submit_napkin_capture(
                         exception_type="vendor_reputation_feed_failed",
                         category="needs_human",
                         reason=f"could not report reputation fact for vendor {fact.culprit_vendor_id}: {exc}",
-                        correlation_id=correlation_id,
+                        correlation_id=fact_correlation_id,
                         raw_ref=None,
                         contract_name=None,
                     )
@@ -382,6 +409,8 @@ async def close_project(
     conn: AsyncConnection = Depends(get_connection),
     identity: Identity = Depends(require_permission("decision.execution_facts.close_project", get_current_identity)),
 ) -> ExecutionSummaryResponse:
+    await _require_active_bid_decision(conn, tender_id=tender_id)
+
     # overhead_buffer_contributions is append-only (no UPDATE/DELETE) --
     # a second close on an already-closed project would silently double
     # count this tender's contribution to Phase 4.D's future calibration

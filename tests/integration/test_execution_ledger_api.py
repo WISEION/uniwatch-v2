@@ -254,6 +254,99 @@ async def test_napkin_submission_requires_auth(client, tender_with_boq_and_lock_
     assert response.status_code == 401
 
 
+async def test_napkin_submission_rejected_when_tender_has_no_active_bid_decision(client, pm_user, engine):
+    # TENDER_INTELLIGENCE_SPEC.md Section7.3 scopes the Execution Ledger to
+    # an already-decided (bid/conditional_bid) tender -- a tender that was
+    # never decided (or was decided no_bid) has no "plan" side for a
+    # plan-vs-fact comparison to mean anything, so this must be rejected
+    # before any evidence/OCR work happens, not silently accepted.
+    from packages.tender.normalized import create_normalized_version, get_or_create_tender
+    from packages.tender.raw_snapshot import save_raw_snapshot
+
+    async with engine.begin() as conn:
+        snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="test-4c-no-decision",
+            raw_body=b"{}",
+            contract_version="etender.event_details",
+            correlation_id="test-4c-no-decision",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-4c-no-decision")
+        await create_normalized_version(
+            conn,
+            tender_id=tender_id,
+            raw_snapshot_id=snapshot_id,
+            parser_version="v1",
+            normalized_fields={"id": 900101},
+        )
+
+    response = await client.post(
+        f"/tenders/{tender_id}/execution-facts/napkin",
+        json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"x").decode()},
+        headers={"X-Dev-User": pm_user},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "tender_not_decided_bid"
+
+    async with engine.connect() as conn:
+        evidence_rows = (
+            (await conn.execute(text("SELECT id FROM execution_napkin_evidence WHERE tender_id = :t"), {"t": tender_id}))
+            .mappings()
+            .all()
+        )
+        assert evidence_rows == [], "rejected out-of-scope submission must not create an evidence row"
+
+
+async def test_napkin_submission_rejected_when_tender_was_decided_no_bid(client, pm_user, engine):
+    from packages.decision.decision_model import Decision
+    from packages.decision.decision_store import store_decision
+    from packages.tender.normalized import create_normalized_version, get_or_create_tender
+    from packages.tender.raw_snapshot import save_raw_snapshot
+
+    async with engine.begin() as conn:
+        snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="test-4c-no-bid-decision",
+            raw_body=b"{}",
+            contract_version="etender.event_details",
+            correlation_id="test-4c-no-bid-decision",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-4c-no-bid-decision")
+        await create_normalized_version(
+            conn,
+            tender_id=tender_id,
+            raw_snapshot_id=snapshot_id,
+            parser_version="v1",
+            normalized_fields={"id": 900102},
+        )
+        await store_decision(
+            conn,
+            Decision(
+                tender_id=tender_id,
+                decision_type="no_bid",
+                conditions=(),
+                deadline=None,
+                justification="test",
+                actor="pm-el-1",
+                decided_at="2026-08-10T00:00:00+00:00",
+                go_no_go_inputs_id=None,
+                bid_readiness_candidate_id=None,
+            ),
+        )
+
+    response = await client.post(
+        f"/tenders/{tender_id}/execution-facts/napkin",
+        json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"x").decode()},
+        headers={"X-Dev-User": pm_user},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "tender_not_decided_bid"
+
+
 async def test_voice_capture_stores_evidence_but_is_not_parsed(client, pm_user, tender_with_boq_and_lock_in):
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
@@ -399,6 +492,73 @@ async def test_two_unrelated_napkin_failures_on_the_same_tender_produce_two_exce
         assert exception_rows[0]["correlation_id"] != exception_rows[1]["correlation_id"]
         assert "not valid JSON" in exception_rows[0]["reason"]
         assert "observations" in exception_rows[1]["reason"]
+
+
+async def test_two_vendor_culprits_in_one_submission_each_get_their_own_exception_row(
+    client, tender_app, pm_user, tender_with_boq_and_lock_in, engine
+):
+    # Regression: enqueue_exception's get-or-create key is (source,
+    # exception_type, correlation_id). Before the fix, every fact drafted
+    # from ONE napkin submission shared the same request-level
+    # correlation_id, so a second distinct vendor-culprit fact needing the
+    # same exception_type (here: unresolved vendor name) would silently
+    # collapse into the first fact's still-open row and its own reason
+    # would be lost -- against hard ban #3 (no silent drops).
+    ocr_payload = {
+        "observations": [
+            {
+                "line_description": "Rebar 12mm",
+                "actual_qty": 5,
+                "deviation_reason": "first vendor never showed up",
+                "deviation_category": "downtime",
+                "culprit_type": "vendor",
+                "culprit_vendor_name": "Nonexistent Vendor One",
+                "observed_at": "2026-08-10T00:00:00+00:00",
+            },
+            {
+                "line_description": "Rebar 12mm",
+                "actual_qty": 5,
+                "deviation_reason": "second vendor delivered wrong spec",
+                "deviation_category": "rework",
+                "culprit_type": "vendor",
+                "culprit_vendor_name": "Nonexistent Vendor Two",
+                "observed_at": "2026-08-10T00:00:00+00:00",
+            },
+        ]
+    }
+    tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
+
+    response = await client.post(
+        f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
+        json={
+            "capture_kind": "photo",
+            "mime_type": "image/jpeg",
+            "image_base64": base64.b64encode(b"jpeg-bytes").decode(),
+            "reputation_ttl_days": 30,
+        },
+        headers={"X-Dev-User": pm_user},
+    )
+    assert response.status_code == 201
+    assert len(response.json()["facts"]) == 2
+
+    async with engine.connect() as conn:
+        rows = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT reason, correlation_id FROM exception_queue "
+                        "WHERE exception_type = 'vendor_reputation_unresolved_vendor' ORDER BY id"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert len(rows) == 2, "each unresolved vendor culprit must get its own exception_queue row, not be merged"
+        assert rows[0]["correlation_id"] != rows[1]["correlation_id"]
+        reasons = {r["reason"] for r in rows}
+        assert any("Nonexistent Vendor One" in r for r in reasons)
+        assert any("Nonexistent Vendor Two" in r for r in reasons)
 
 
 async def test_photo_submission_with_malformed_observed_at_is_422_and_durably_queued(
@@ -781,6 +941,42 @@ async def test_close_project_is_not_idempotent_second_call_rejected(client, pm_u
             .all()
         )
     assert len(rows_after_second) == count_after_first, "a rejected second close must not insert any additional rows"
+
+
+async def test_close_project_rejected_when_tender_has_no_active_bid_decision(client, pm_user, engine):
+    from packages.tender.normalized import create_normalized_version, get_or_create_tender
+    from packages.tender.raw_snapshot import save_raw_snapshot
+
+    async with engine.begin() as conn:
+        snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="etender.event_details",
+            identity_key="test-4c-close-no-decision",
+            raw_body=b"{}",
+            contract_version="etender.event_details",
+            correlation_id="test-4c-close-no-decision",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-4c-close-no-decision")
+        await create_normalized_version(
+            conn,
+            tender_id=tender_id,
+            raw_snapshot_id=snapshot_id,
+            parser_version="v1",
+            normalized_fields={"id": 900103},
+        )
+
+    response = await client.post(f"/tenders/{tender_id}/close-project", headers={"X-Dev-User": pm_user})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "tender_not_decided_bid"
+
+    async with engine.connect() as conn:
+        rows = (
+            (await conn.execute(text("SELECT id FROM overhead_buffer_contributions WHERE tender_id = :t"), {"t": tender_id}))
+            .mappings()
+            .all()
+        )
+        assert rows == [], "a rejected close must not write any overhead-buffer contribution"
 
 
 async def test_organization_execution_history_route_returns_matching_facts_and_requires_auth(client, pm_user, engine):
