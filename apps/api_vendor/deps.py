@@ -9,19 +9,13 @@ docs/decisions/OPEN-QUESTIONS.md, not assumed permanent."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 from fastapi import Header, Request
-from sqlalchemy.ext.asyncio import AsyncConnection
 
+from packages.platform.app_factory import get_connection
 from packages.platform.errors import ApiError
 from packages.vendor.vendor_store import get_vendor_id_by_api_key
 
-
-async def get_connection(request: Request) -> AsyncIterator[AsyncConnection]:
-    engine = request.app.state.engine
-    async with engine.begin() as conn:
-        yield conn
+__all__ = ["get_connection", "get_current_vendor_id"]
 
 
 async def get_current_vendor_id(
