@@ -15,12 +15,15 @@ corrupt the rollup calibration_summary.py builds on top of this."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from packages.contracts.vendor_api import VendorApiError, list_vendor_offers
 from packages.decision.calibration_model import LossReason, TenderOutcome
 from packages.decision.calibration_store import (
     list_loss_reasons_by_outcome,
@@ -29,10 +32,13 @@ from packages.decision.calibration_store import (
     store_loss_reason,
     store_tender_outcome,
 )
+from packages.decision.calibration_summary import PriceComparison, compare_winner_to_our_basis, summarize_loss_reasons
+from packages.decision.matching import match_boq_line
 from packages.platform.audit import write_audit_log
 from packages.platform.errors import ApiError
 from packages.platform.rbac.dependency import require_permission
 from packages.platform.rbac.models import Identity
+from packages.tender.boq_lines_store import list_boq_lines_by_event
 from packages.tender.forecast_snapshot_store import (
     confirm_forecast_tender_link,
     earliest_observed_at,
@@ -41,9 +47,10 @@ from packages.tender.forecast_snapshot_store import (
     observed_lag_days,
     store_forecast_card_snapshot,
 )
+from packages.tender.normalized import get_event_id_for_tender
 from packages.tender.signals_store import build_object_region_forecast_card
 
-from ..deps import get_connection, get_current_identity
+from ..deps import get_connection, get_current_identity, get_vendor_http_client
 from .execution_ledger import _require_active_bid_decision
 
 router = APIRouter(prefix="/tenders/{tender_id}", tags=["calibration"])
@@ -117,6 +124,17 @@ def _outcome_row_to_response(row: dict[str, Any]) -> TenderOutcomeResponse:
         currency=row["currency"],
         announced_at=row["announced_at"].isoformat() if row["announced_at"] is not None else None,
         source_ref=row["source_ref"],
+        entered_by=row["entered_by"],
+        entered_at=row["entered_at"].isoformat(),
+    )
+
+
+def _loss_reason_row_to_response(row: dict[str, Any]) -> LossReasonResponse:
+    return LossReasonResponse(
+        id=row["id"],
+        tender_outcome_id=row["tender_outcome_id"],
+        loss_reason=row["loss_reason"],
+        note=row["note"],
         entered_by=row["entered_by"],
         entered_at=row["entered_at"].isoformat(),
     )
@@ -238,14 +256,7 @@ async def post_loss_reason(
 
     rows = await list_loss_reasons_by_outcome(conn, tender_outcome_id=outcome_row["id"])
     stored = next(r for r in rows if r["id"] == reason_id)
-    return LossReasonResponse(
-        id=stored["id"],
-        tender_outcome_id=stored["tender_outcome_id"],
-        loss_reason=stored["loss_reason"],
-        note=stored["note"],
-        entered_by=stored["entered_by"],
-        entered_at=stored["entered_at"].isoformat(),
-    )
+    return _loss_reason_row_to_response(stored)
 
 
 @router.get("/overhead-buffer", response_model=OverheadBufferListResponse)
@@ -266,6 +277,126 @@ async def get_overhead_buffer(
             )
             for r in rows
         ]
+    )
+
+
+class PriceComparisonResponse(BaseModel):
+    winner_amount: str | None
+    our_submitted_amount: str | None
+    our_scg_cost_basis: str | None
+    winner_vs_our_submitted: str | None
+    winner_vs_our_cost_basis: str | None
+    coverage_line_count: int
+    total_line_count: int
+    is_partial_coverage: bool
+
+
+class CalibrationResponse(BaseModel):
+    outcome: TenderOutcomeResponse
+    loss_reasons: list[LossReasonResponse]
+    loss_reason_rollup: dict[str, int]
+    price_comparison: PriceComparisonResponse
+    overhead_buffer: list[OverheadBufferContributionResponse]
+
+
+def _price_comparison_to_response(comparison: PriceComparison) -> PriceComparisonResponse:
+    return PriceComparisonResponse(
+        winner_amount=str(comparison.winner_amount) if comparison.winner_amount is not None else None,
+        our_submitted_amount=str(comparison.our_submitted_amount) if comparison.our_submitted_amount is not None else None,
+        our_scg_cost_basis=str(comparison.our_scg_cost_basis) if comparison.our_scg_cost_basis is not None else None,
+        winner_vs_our_submitted=(
+            str(comparison.winner_vs_our_submitted) if comparison.winner_vs_our_submitted is not None else None
+        ),
+        winner_vs_our_cost_basis=(
+            str(comparison.winner_vs_our_cost_basis) if comparison.winner_vs_our_cost_basis is not None else None
+        ),
+        coverage_line_count=comparison.coverage_line_count,
+        total_line_count=comparison.total_line_count,
+        is_partial_coverage=comparison.is_partial_coverage,
+    )
+
+
+@router.get("/calibration", response_model=CalibrationResponse)
+async def get_calibration(
+    tender_id: int,
+    as_of: datetime,
+    request: Request,
+    conn: AsyncConnection = Depends(get_connection),
+    vendor_http_client: httpx.AsyncClient | None = Depends(get_vendor_http_client),
+    identity: Identity = Depends(require_permission("decision.outcome.read", get_current_identity)),
+) -> CalibrationResponse:
+    if as_of.tzinfo is None:
+        raise ApiError(status_code=422, code="naive_datetime", message="as_of must include a timezone offset")
+
+    outcome_row = await load_tender_outcome(conn, tender_id=tender_id)
+    if outcome_row is None:
+        # A calibration view with no recorded outcome is meaningless --
+        # inventing an empty one would imply a fact nobody entered.
+        raise ApiError(
+            status_code=404,
+            code="outcome_not_found",
+            message=f"tender {tender_id} has no recorded outcome",
+        )
+
+    loss_reason_rows = await list_loss_reasons_by_outcome(conn, tender_outcome_id=outcome_row["id"])
+    overhead_rows = await list_overhead_buffer_contributions(conn, tender_id=tender_id)
+
+    # Same wiring as GET /bid-readiness-candidate (decision.py): resolve the
+    # event id, fetch this tender's BOQ lines, fetch real vendor offers, and
+    # run the same match_boq_line each BOQ line already goes through -- no
+    # separate cost-basis formula is invented here.
+    event_id = await get_event_id_for_tender(conn, tender_id=tender_id)
+    boq_lines = await list_boq_lines_by_event(conn, source="etender", event_id=event_id) if event_id is not None else []
+    matchable_lines = [line for line in boq_lines if line.line_type == "normal"]
+
+    settings = request.app.state.settings
+    try:
+        offers = await list_vendor_offers(
+            settings.vendor_service_base_url,
+            data_realm="vendor-sandbox",
+            as_of=as_of.isoformat(),
+            client=vendor_http_client,
+        )
+    except VendorApiError as exc:
+        raise ApiError(status_code=502, code="vendor_service_unavailable", message=str(exc)) from exc
+
+    our_scg_cost_basis = Decimal("0")
+    priced_line_count = 0
+    for line in matchable_lines:
+        match = match_boq_line(line, offers, as_of=as_of)
+        if match.ranked_executable:
+            # rank_executable_candidates_by_tco (matching.py) already picked
+            # the cheapest executable, same-currency candidate -- take it
+            # as-is rather than re-deriving a ranking here.
+            _candidate, tco = match.ranked_executable[0]
+            our_scg_cost_basis += tco.base_price_with_vat * line.qty
+            priced_line_count += 1
+
+    comparison = compare_winner_to_our_basis(
+        winner_amount=outcome_row["winner_amount"],
+        our_submitted_amount=outcome_row["our_submitted_amount"],
+        # Hard ban #3: zero matchable lines priced is "no cost basis",
+        # never a cost basis of 0.
+        our_scg_cost_basis=our_scg_cost_basis if priced_line_count > 0 else None,
+        priced_line_count=priced_line_count,
+        total_line_count=len(matchable_lines),
+    )
+
+    return CalibrationResponse(
+        outcome=_outcome_row_to_response(outcome_row),
+        loss_reasons=[_loss_reason_row_to_response(r) for r in loss_reason_rows],
+        loss_reason_rollup=summarize_loss_reasons(loss_reason_rows),
+        price_comparison=_price_comparison_to_response(comparison),
+        overhead_buffer=[
+            OverheadBufferContributionResponse(
+                id=r["id"],
+                tender_id=r["tender_id"],
+                deviation_category=r["deviation_category"],
+                fact_count=r["fact_count"],
+                contributed_at=r["contributed_at"].isoformat(),
+            )
+            for r in overhead_rows
+        ],
     )
 
 

@@ -1,28 +1,38 @@
 """End-to-end over real HTTP for task 4.D's outcome / loss-reason /
-overhead-buffer routes (packages/decision/calibration_model.py,
-calibration_store.py). Fixtures follow tests/integration/test_decision_api.py
--- this module needs no vendor app: none of these routes call the Vendor
-service."""
+overhead-buffer / forecast-snapshot / calibration routes
+(packages/decision/calibration_model.py, calibration_store.py,
+calibration_summary.py). Fixtures follow tests/integration/test_decision_api.py
+-- GET /calibration needs a real in-process Vendor service (same
+httpx.ASGITransport wiring as test_decision_api.py's `client`); every other
+route in this module ignores it."""
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import httpx
 import pytest_asyncio
 from sqlalchemy import text
 
 from apps.api_tender.main import create_app as create_tender_app
+from apps.api_vendor.main import create_app as create_vendor_app
 from packages.decision.calibration_store import load_tender_outcome
 from packages.decision.decision_model import Decision
 from packages.decision.decision_store import store_decision
 from packages.decision.execution_ledger_store import store_overhead_buffer_contribution
 from packages.platform.settings import Settings
+from packages.tender.boq_line_model import BoqLine
+from packages.tender.boq_lines_store import store_boq_lines
 from packages.tender.normalized import create_normalized_version, get_or_create_tender
 from packages.tender.raw_snapshot import save_raw_snapshot
 from packages.tender.signal_model import Signal
 from packages.tender.signals_store import store_signal
+from packages.vendor.reputation_model import ReputationFact
+from packages.vendor.reputation_store import store_reputation_fact
+from packages.vendor.vendor_model import Offer, Vendor
+from packages.vendor.vendor_store import store_offer, store_vendor
 
 CALIBRATION_PERMISSIONS = (
     "decision.outcome.write",
@@ -60,10 +70,26 @@ async def tender_app(engine, _database_url):
 
 
 @pytest_asyncio.fixture
-async def client(tender_app):
-    transport = httpx.ASGITransport(app=tender_app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://tender-test") as c:
+async def vendor_app(engine, _database_url):
+    settings = Settings(database_url=_database_url)
+    app = create_vendor_app(settings)
+    app.state.engine = engine
+    return app
+
+
+@pytest_asyncio.fixture
+async def client(tender_app, vendor_app):
+    vendor_transport = httpx.ASGITransport(app=vendor_app, raise_app_exceptions=False)
+    vendor_client = httpx.AsyncClient(transport=vendor_transport, base_url="http://vendor-test")
+    tender_app.state.vendor_http_client = vendor_client
+    tender_app.state.settings = Settings(
+        database_url=tender_app.state.settings.database_url,
+        vendor_service_base_url="http://vendor-test",
+    )
+    tender_transport = httpx.ASGITransport(app=tender_app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=tender_transport, base_url="http://tender-test") as c:
         yield c
+    await vendor_client.aclose()
 
 
 @pytest_asyncio.fixture
@@ -136,6 +162,109 @@ async def decided_tender_id(engine):
 @pytest_asyncio.fixture
 async def undecided_tender_id(engine):
     return await _make_tender(engine, identity_key="test-calibration-api-undecided-tender", event_id=102)
+
+
+@pytest_asyncio.fixture
+async def decided_tender_id_with_boq(engine):
+    """Same shape as test_decision_api.py's tender_with_boq, plus a bid
+    decision -- GET /calibration's cost-basis path needs a real BOQ line to
+    run match_boq_line/list_vendor_offers against."""
+    line = BoqLine(
+        source_line_id=1,
+        page_number=1,
+        section=None,
+        category_code=None,
+        description="Supply of rebar-12mm reinforcement steel",
+        unit_raw="t",
+        unit_canonical="t",
+        unit_status="mapped",
+        qty=Decimal("10"),
+        line_type="normal",
+        spec_requirements=(),
+        rate=Decimal("850"),
+        amount=Decimal("8500"),
+    )
+    async with engine.begin() as conn:
+        raw_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="event_details",
+            identity_key="test-calibration-api-tender-with-boq",
+            raw_body=json.dumps({"eventId": 103}).encode("utf-8"),
+            contract_version="v1",
+            correlation_id="test-calibration-api-tender-with-boq",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key="test-calibration-api-tender-with-boq")
+        version = await create_normalized_version(
+            conn, tender_id=tender_id, raw_snapshot_id=raw_snapshot_id, parser_version="v1", normalized_fields={"id": 103}
+        )
+        await store_boq_lines(
+            conn,
+            source="etender",
+            event_id=103,
+            tender_version_id=version.id,
+            raw_snapshot_id=raw_snapshot_id,
+            lines=[line],
+        )
+        await store_decision(
+            conn,
+            Decision(
+                tender_id=tender_id,
+                decision_type="bid",
+                conditions=(),
+                deadline=None,
+                justification="calibration api test fixture",
+                actor="pm-1",
+                decided_at=NOW,
+                go_no_go_inputs_id=None,
+                bid_readiness_candidate_id=None,
+            ),
+        )
+    return tender_id
+
+
+@pytest_asyncio.fixture
+async def two_strong_vendors(engine):
+    """Same shape as test_decision_api.py's two_strong_vendors -- two
+    reserved, fresh, sufficient-volume offers on rebar-12mm, one carrying a
+    positive ReputationFact."""
+    async with engine.begin() as conn:
+        for name, seed in [("Vendor A", 1), ("Vendor B", 2)]:
+            vendor = Vendor(data_realm="vendor-sandbox", watermark="SYNTHETIC", name=name, provider_type="synthetic", seed=seed)
+            vendor_id, _api_key = await store_vendor(conn, vendor)
+            offer = Offer(
+                vendor_name=name,
+                data_realm="vendor-sandbox",
+                watermark="SYNTHETIC",
+                material="rebar-12mm",
+                price=850.0,
+                currency="AZN",
+                vat_rate=18.0,
+                uom="t",
+                uom_canonical_qty=1.0,
+                moq=1.0,
+                capacity=100.0,
+                inventory=50.0,
+                valid_from="2026-08-01T00:00:00+00:00",
+                valid_until="2026-09-01T00:00:00+00:00",
+                evidence_source="test",
+                observed_at="2026-08-01T00:00:00+00:00",
+                adverse_case=None,
+                executable_status="reserved",
+            )
+            await store_offer(conn, vendor_id, offer)
+            if name == "Vendor A":
+                fact = ReputationFact(
+                    data_realm="vendor-sandbox",
+                    watermark="SYNTHETIC",
+                    vendor_name=name,
+                    event_type="price_held_after_win",
+                    project_ref=None,
+                    source_ref="test-calibration-api",
+                    observed_at="2026-08-01T00:00:00+00:00",
+                    ttl_days=365,
+                )
+                await store_reputation_fact(conn, vendor_id, fact)
 
 
 @pytest_asyncio.fixture
@@ -499,3 +628,73 @@ async def test_duplicate_forecast_tender_link_is_409_not_a_500_from_the_unique_c
     )
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "tender_link_already_confirmed"
+
+
+async def test_get_calibration_without_auth_is_401(client, decided_tender_id_with_boq):
+    r = await client.get(f"/tenders/{decided_tender_id_with_boq}/calibration", params={"as_of": "2026-08-08T00:00:00Z"})
+    assert r.status_code == 401
+
+
+async def test_get_calibration_authenticated_without_permission_is_403(
+    client, user_without_permissions, decided_tender_id_with_boq
+):
+    r = await client.get(
+        f"/tenders/{decided_tender_id_with_boq}/calibration",
+        params={"as_of": "2026-08-08T00:00:00Z"},
+        headers=_auth(user_without_permissions),
+    )
+    assert r.status_code == 403
+
+
+async def test_get_calibration_rejects_naive_as_of(client, pm_user, decided_tender_id_with_boq):
+    r = await client.get(
+        f"/tenders/{decided_tender_id_with_boq}/calibration",
+        params={"as_of": "2026-08-08T00:00:00"},
+        headers=_auth(pm_user),
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "naive_datetime"
+
+
+async def test_get_calibration_returns_404_when_no_outcome_recorded(client, pm_user, decided_tender_id_with_boq):
+    r = await client.get(
+        f"/tenders/{decided_tender_id_with_boq}/calibration",
+        params={"as_of": "2026-08-08T00:00:00Z"},
+        headers=_auth(pm_user),
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "outcome_not_found"
+
+
+async def test_get_calibration_returns_price_comparison_with_coverage_and_loss_rollup(
+    client, pm_user, decided_tender_id_with_boq, two_strong_vendors
+):
+    await client.post(f"/tenders/{decided_tender_id_with_boq}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(
+        f"/tenders/{decided_tender_id_with_boq}/outcome/loss-reasons",
+        json={"loss_reason": "dumping", "note": "30% under our cost"},
+        headers=_auth(pm_user),
+    )
+
+    r = await client.get(
+        f"/tenders/{decided_tender_id_with_boq}/calibration",
+        params={"as_of": "2026-08-08T00:00:00Z"},
+        headers=_auth(pm_user),
+    )
+    assert r.status_code == 200
+    body = r.json()
+
+    assert body["outcome"]["outcome"] == "lost"
+    assert body["loss_reason_rollup"] == {"dumping": 1}
+
+    comparison = body["price_comparison"]
+    # The one BOQ line (qty=10) has two strong, fresh, sufficient offers at
+    # 850 AZN + 18% VAT -- match_boq_line's own TCO ranking picks the
+    # cheapest, same currency candidate: 850 * 1.18 * 10 = 10030.
+    assert Decimal(comparison["our_scg_cost_basis"]) == Decimal("10030")
+    assert Decimal(comparison["winner_vs_our_submitted"]) == Decimal("98000.00") - Decimal("120000.00")
+    assert Decimal(comparison["winner_vs_our_cost_basis"]) == Decimal("98000.00") - Decimal("10030")
+    assert comparison["coverage_line_count"] == 1
+    assert comparison["total_line_count"] == 1
+    # Full coverage on this tender's one matchable line -- not partial.
+    assert comparison["is_partial_coverage"] is False
