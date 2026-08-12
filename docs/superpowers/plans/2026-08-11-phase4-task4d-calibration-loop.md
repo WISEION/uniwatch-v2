@@ -678,9 +678,7 @@ async def test_post_outcome_without_auth_is_401(client, decided_tender_id):
 
 
 async def test_post_outcome_authenticated_without_permission_is_403(client, user_without_permissions, decided_tender_id):
-    r = await client.post(
-        f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(user_without_permissions)
-    )
+    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(user_without_permissions))
     assert r.status_code == 403
 
 
@@ -691,10 +689,10 @@ async def test_post_outcome_persists_and_audits(client, pm_user, decided_tender_
     async with engine.begin() as conn:
         row = await load_tender_outcome(conn, tender_id=decided_tender_id)
         audit = (
-            await conn.execute(
-                text("SELECT action FROM audit_log WHERE object_id = :oid"), {"oid": str(decided_tender_id)}
-            )
-        ).scalars().all()
+            (await conn.execute(text("SELECT action FROM audit_log WHERE object_id = :oid"), {"oid": str(decided_tender_id)}))
+            .scalars()
+            .all()
+        )
 
     assert row is not None and row["outcome"] == "lost"
     assert "calibration.record_outcome" in audit
@@ -718,16 +716,12 @@ async def test_second_outcome_is_409_not_a_500_from_the_unique_index(client, pm_
 async def test_unknown_outcome_value_is_422_not_500(client, pm_user, decided_tender_id):
     """4.C's sixth deferred item was exactly this defect on another route --
     validation left to the migration CHECK, surfacing as 500. Not repeated."""
-    r = await client.post(
-        f"/tenders/{decided_tender_id}/outcome", json=_payload(outcome="probably_lost"), headers=_auth(pm_user)
-    )
+    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(outcome="probably_lost"), headers=_auth(pm_user))
     assert r.status_code == 422
 
 
 async def test_blank_source_ref_is_422_because_INV_15_requires_provenance(client, pm_user, decided_tender_id):
-    r = await client.post(
-        f"/tenders/{decided_tender_id}/outcome", json=_payload(source_ref="  "), headers=_auth(pm_user)
-    )
+    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(source_ref="  "), headers=_auth(pm_user))
     assert r.status_code == 422
 
 
@@ -907,15 +901,23 @@ async def test_duplicate_link_is_rejected_by_the_unique_constraint(engine, seede
     async with engine.begin() as conn:
         snapshot_id = await store_forecast_card_snapshot(conn, _card(), computed_at=NOW)
         await confirm_forecast_tender_link(
-            conn, snapshot_id=snapshot_id, tender_id=seeded_tender_id, note="n",
-            confirmed_by="pm", confirmed_at=NOW,
+            conn,
+            snapshot_id=snapshot_id,
+            tender_id=seeded_tender_id,
+            note="n",
+            confirmed_by="pm",
+            confirmed_at=NOW,
         )
 
     with pytest.raises(IntegrityError):
         async with engine.begin() as conn:
             await confirm_forecast_tender_link(
-                conn, snapshot_id=snapshot_id, tender_id=seeded_tender_id, note="n",
-                confirmed_by="pm", confirmed_at=NOW,
+                conn,
+                snapshot_id=snapshot_id,
+                tender_id=seeded_tender_id,
+                note="n",
+                confirmed_by="pm",
+                confirmed_at=NOW,
             )
 
 
@@ -929,8 +931,12 @@ async def test_observed_lag_is_measured_from_earliest_evidence_to_first_observed
             conn, _card(evidence_observed_at="2026-02-01T00:00:00+00:00"), computed_at=NOW
         )
         await confirm_forecast_tender_link(
-            conn, snapshot_id=snapshot_id, tender_id=seeded_tender_id, note="n",
-            confirmed_by="pm", confirmed_at=NOW,
+            conn,
+            snapshot_id=snapshot_id,
+            tender_id=seeded_tender_id,
+            note="n",
+            confirmed_by="pm",
+            confirmed_at=NOW,
         )
         lag = await observed_lag_days(conn, snapshot_id=snapshot_id, tender_id=seeded_tender_id)
 
@@ -944,14 +950,19 @@ async def test_lag_is_none_when_no_evidence_carries_a_parseable_observed_at(engi
         is_composite=True,
         signal_types=frozenset({"design_tender", "procurement_plan"}),
         budget_estimate=None,
-        evidence_chain=({"signal_type": "design_tender", "source": "etender", "observed_at": None,
-                         "raw_snapshot_id": 2, "value": {}},),
+        evidence_chain=(
+            {"signal_type": "design_tender", "source": "etender", "observed_at": None, "raw_snapshot_id": 2, "value": {}},
+        ),
     )
     async with engine.begin() as conn:
         snapshot_id = await store_forecast_card_snapshot(conn, card, computed_at=NOW)
         await confirm_forecast_tender_link(
-            conn, snapshot_id=snapshot_id, tender_id=seeded_tender_id, note="n",
-            confirmed_by="pm", confirmed_at=NOW,
+            conn,
+            snapshot_id=snapshot_id,
+            tender_id=seeded_tender_id,
+            note="n",
+            confirmed_by="pm",
+            confirmed_at=NOW,
         )
         assert await observed_lag_days(conn, snapshot_id=snapshot_id, tender_id=seeded_tender_id) is None
 ```
@@ -1026,8 +1037,11 @@ def test_comparison_carries_the_coverage_it_was_computed_over():
 
 def test_full_coverage_is_flagged_as_not_partial():
     c = compare_winner_to_our_basis(
-        winner_amount=Decimal("1"), our_submitted_amount=Decimal("1"),
-        our_scg_cost_basis=Decimal("1"), priced_line_count=5, total_line_count=5,
+        winner_amount=Decimal("1"),
+        our_submitted_amount=Decimal("1"),
+        our_scg_cost_basis=Decimal("1"),
+        priced_line_count=5,
+        total_line_count=5,
     )
     assert c.is_partial_coverage is False
 
@@ -1036,8 +1050,11 @@ def test_a_missing_winner_amount_yields_none_deltas_not_zero():
     """Hard ban #3: unknown is not zero. A winner whose price we do not
     know must not read as 'they bid nothing'."""
     c = compare_winner_to_our_basis(
-        winner_amount=None, our_submitted_amount=Decimal("120000"),
-        our_scg_cost_basis=Decimal("90000"), priced_line_count=17, total_line_count=20,
+        winner_amount=None,
+        our_submitted_amount=Decimal("120000"),
+        our_scg_cost_basis=Decimal("90000"),
+        priced_line_count=17,
+        total_line_count=20,
     )
     assert c.winner_vs_our_submitted is None
     assert c.winner_vs_our_cost_basis is None
@@ -1048,8 +1065,11 @@ def test_a_missing_winner_amount_yields_none_deltas_not_zero():
 
 def test_no_ratio_is_exposed_without_coverage_travelling_with_it():
     c = compare_winner_to_our_basis(
-        winner_amount=Decimal("98000"), our_submitted_amount=Decimal("120000"),
-        our_scg_cost_basis=Decimal("90000"), priced_line_count=1, total_line_count=20,
+        winner_amount=Decimal("98000"),
+        our_submitted_amount=Decimal("120000"),
+        our_scg_cost_basis=Decimal("90000"),
+        priced_line_count=1,
+        total_line_count=20,
     )
     # 1 of 20 lines priced: the delta exists but must be marked partial so
     # no caller can read it as a whole-tender margin.
