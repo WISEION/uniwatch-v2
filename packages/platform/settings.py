@@ -21,7 +21,7 @@ class Settings:
     # Version the running code was built for (FR-PLT-12 rule 2: startup
     # compares this against the ledger's current_version and refuses to
     # start on mismatch instead of auto-migrating).
-    expected_schema_version: int = field(default_factory=lambda: int(os.environ.get("EXPECTED_SCHEMA_VERSION", "17")))
+    expected_schema_version: int = field(default_factory=lambda: int(os.environ.get("EXPECTED_SCHEMA_VERSION", "18")))
     # Explicit trusted reverse-proxy CIDRs (FR-PLT-07). Empty by default —
     # deny-by-default extends to "no proxy is trusted until configured".
     trusted_proxy_cidrs: tuple[str, ...] = field(
