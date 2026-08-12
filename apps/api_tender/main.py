@@ -23,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             execution_ledger.router,
             execution_ledger.organization_router,
             calibration.router,
+            calibration.forecast_snapshot_router,
         ],
         settings=settings,
     )

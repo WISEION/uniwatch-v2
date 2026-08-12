@@ -21,8 +21,15 @@ from packages.decision.execution_ledger_store import store_overhead_buffer_contr
 from packages.platform.settings import Settings
 from packages.tender.normalized import create_normalized_version, get_or_create_tender
 from packages.tender.raw_snapshot import save_raw_snapshot
+from packages.tender.signal_model import Signal
+from packages.tender.signals_store import store_signal
 
-CALIBRATION_PERMISSIONS = ("decision.outcome.write", "decision.outcome.read")
+CALIBRATION_PERMISSIONS = (
+    "decision.outcome.write",
+    "decision.outcome.read",
+    "tender.forecast_snapshot.write",
+    "tender.forecast_snapshot.read",
+)
 
 NOW = datetime(2026, 8, 11, tzinfo=UTC).isoformat()
 
@@ -129,6 +136,42 @@ async def decided_tender_id(engine):
 @pytest_asyncio.fixture
 async def undecided_tender_id(engine):
     return await _make_tender(engine, identity_key="test-calibration-api-undecided-tender", event_id=102)
+
+
+@pytest_asyncio.fixture
+async def object_region_with_composite_signals(engine):
+    """object_intersection.detect_intersection's is_composite is exactly
+    '2+ distinct signal_types on one object' -- any two qualify, no
+    particular pair is special."""
+    region = "TEST-REGION-CALIBRATION"
+    async with engine.begin() as conn:
+        for signal_type, event_id in (("donor_pipeline_project", 201), ("design_tender", 202)):
+            raw_snapshot_id = await save_raw_snapshot(
+                conn,
+                source="worldbank" if signal_type == "donor_pipeline_project" else "etender",
+                resource_type=signal_type,
+                identity_key=f"test-calibration-api-signal-{signal_type}",
+                raw_body=json.dumps({"eventId": event_id}).encode("utf-8"),
+                contract_version="v1",
+                correlation_id=f"test-calibration-api-signal-{signal_type}",
+            )
+            await store_signal(
+                conn,
+                Signal(
+                    signal_type=signal_type,
+                    source="test",
+                    raw_snapshot_id=raw_snapshot_id,
+                    value={},
+                    observed_at=NOW,
+                    ttl_class="funding_decision",
+                    confidence="official_source",
+                    object_customer=None,
+                    object_region=region,
+                    object_project_type=None,
+                    correlation_id=f"test-calibration-api-signal-{signal_type}",
+                ),
+            )
+    return region
 
 
 async def test_post_outcome_without_auth_is_401(client, decided_tender_id):
@@ -299,3 +342,160 @@ async def test_get_overhead_buffer_is_empty_list_not_error_when_none_recorded(cl
     r = await client.get(f"/tenders/{decided_tender_id}/overhead-buffer", headers=_auth(pm_user))
     assert r.status_code == 200
     assert r.json()["items"] == []
+
+
+async def test_post_forecast_snapshot_without_auth_is_401(client, object_region_with_composite_signals):
+    r = await client.post("/forecast-snapshots", json={"object_region": object_region_with_composite_signals})
+    assert r.status_code == 401
+
+
+async def test_post_forecast_snapshot_authenticated_without_permission_is_403(
+    client, user_without_permissions, object_region_with_composite_signals
+):
+    r = await client.post(
+        "/forecast-snapshots",
+        json={"object_region": object_region_with_composite_signals},
+        headers=_auth(user_without_permissions),
+    )
+    assert r.status_code == 403
+
+
+async def test_post_forecast_snapshot_below_threshold_is_409(client, pm_user):
+    r = await client.post("/forecast-snapshots", json={"object_region": "REGION-WITH-NO-SIGNALS"}, headers=_auth(pm_user))
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "no_forecast_card"
+
+
+async def test_post_forecast_snapshot_persists_and_audits(client, pm_user, object_region_with_composite_signals, engine):
+    r = await client.post(
+        "/forecast-snapshots",
+        json={"object_region": object_region_with_composite_signals},
+        headers=_auth(pm_user),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["object_region"] == object_region_with_composite_signals
+    assert body["is_composite"] is True
+    assert sorted(body["signal_types"]) == ["design_tender", "donor_pipeline_project"]
+
+    async with engine.begin() as conn:
+        audit = (
+            (await conn.execute(text("SELECT action FROM audit_log WHERE object_id = :oid"), {"oid": str(body["id"])}))
+            .scalars()
+            .all()
+        )
+    assert "calibration.record_forecast_snapshot" in audit
+
+
+async def test_get_forecast_snapshot_without_auth_is_401(client, pm_user, object_region_with_composite_signals):
+    r = await client.post(
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+    )
+    snapshot_id = r.json()["id"]
+    r = await client.get(f"/forecast-snapshots/{snapshot_id}")
+    assert r.status_code == 401
+
+
+async def test_get_forecast_snapshot_returns_404_for_unknown_id(client, pm_user):
+    r = await client.get("/forecast-snapshots/999999999", headers=_auth(pm_user))
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "forecast_snapshot_not_found"
+
+
+async def test_forecast_tender_link_without_auth_is_401(client, pm_user, object_region_with_composite_signals, decided_tender_id):
+    r = await client.post(
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+    )
+    snapshot_id = r.json()["id"]
+    r = await client.post(f"/forecast-snapshots/{snapshot_id}/tender-link", json={"tender_id": decided_tender_id, "note": "n"})
+    assert r.status_code == 401
+
+
+async def test_forecast_tender_link_authenticated_without_permission_is_403(
+    client, pm_user, user_without_permissions, object_region_with_composite_signals, decided_tender_id
+):
+    r = await client.post(
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+    )
+    snapshot_id = r.json()["id"]
+    r = await client.post(
+        f"/forecast-snapshots/{snapshot_id}/tender-link",
+        json={"tender_id": decided_tender_id, "note": "n"},
+        headers=_auth(user_without_permissions),
+    )
+    assert r.status_code == 403
+
+
+async def test_forecast_tender_link_for_unknown_snapshot_is_404(client, pm_user, decided_tender_id):
+    r = await client.post(
+        "/forecast-snapshots/999999999/tender-link",
+        json={"tender_id": decided_tender_id, "note": "n"},
+        headers=_auth(pm_user),
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "forecast_snapshot_not_found"
+
+
+async def test_forecast_tender_link_persists_audits_and_exposes_observed_lag(
+    client, pm_user, object_region_with_composite_signals, decided_tender_id, engine
+):
+    snapshot_response = await client.post(
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+    )
+    snapshot_id = snapshot_response.json()["id"]
+
+    link_response = await client.post(
+        f"/forecast-snapshots/{snapshot_id}/tender-link",
+        json={"tender_id": decided_tender_id, "note": "same road section, same buyer"},
+        headers=_auth(pm_user),
+    )
+    assert link_response.status_code == 200
+    link_body = link_response.json()
+    assert link_body["tender_id"] == decided_tender_id
+    assert link_body["confirmed_by"] == "pm-1"
+    # Both signals in object_region_with_composite_signals were observed at
+    # NOW ("2026-08-11T...") -- decided_tender_id's tenders.created_at is set
+    # by save_raw_snapshot/get_or_create_tender at fixture-creation time
+    # (now()), which happens after NOW, so the lag is >= 0, never negative
+    # or absent.
+    assert link_body["observed_lag_days"] is not None
+    assert link_body["observed_lag_days"] >= 0
+    assert link_body["first_observed_at"] is not None
+
+    async with engine.begin() as conn:
+        audit = (
+            (await conn.execute(text("SELECT action FROM audit_log WHERE object_id = :oid"), {"oid": str(link_body["id"])}))
+            .scalars()
+            .all()
+        )
+    assert "calibration.confirm_forecast_tender_link" in audit
+
+    detail_response = await client.get(f"/forecast-snapshots/{snapshot_id}", headers=_auth(pm_user))
+    assert detail_response.status_code == 200
+    detail_body = detail_response.json()
+    assert len(detail_body["links"]) == 1
+    assert detail_body["links"][0]["observed_lag_days"] == link_body["observed_lag_days"]
+
+
+async def test_duplicate_forecast_tender_link_is_409_not_a_500_from_the_unique_constraint(
+    client, pm_user, object_region_with_composite_signals, decided_tender_id
+):
+    snapshot_response = await client.post(
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+    )
+    snapshot_id = snapshot_response.json()["id"]
+
+    first = await client.post(
+        f"/forecast-snapshots/{snapshot_id}/tender-link",
+        json={"tender_id": decided_tender_id, "note": "n"},
+        headers=_auth(pm_user),
+    )
+    assert first.status_code == 200
+
+    second = await client.post(
+        f"/forecast-snapshots/{snapshot_id}/tender-link",
+        json={"tender_id": decided_tender_id, "note": "n again"},
+        headers=_auth(pm_user),
+    )
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "tender_link_already_confirmed"
