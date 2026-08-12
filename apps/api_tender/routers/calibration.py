@@ -27,6 +27,7 @@ from packages.contracts.vendor_api import VendorApiError, list_vendor_offers
 from packages.decision.calibration_model import LossReason, TenderOutcome
 from packages.decision.calibration_store import (
     list_loss_reasons_by_outcome,
+    list_outcomes_by_organization_voen,
     list_overhead_buffer_contributions,
     load_tender_outcome,
     store_loss_reason,
@@ -571,3 +572,36 @@ async def post_forecast_tender_link(
     lag_days = await observed_lag_days(conn, snapshot_id=snapshot_id, tender_id=stored["tender_id"])
     first_observed_at = earliest_observed_at(snapshot["evidence_chain"])
     return _link_row_to_response(stored, lag_days=lag_days, first_observed_at=first_observed_at)
+
+
+class OrganizationOutcomeResponse(BaseModel):
+    outcome: TenderOutcomeResponse
+    loss_reasons: list[LossReasonResponse]
+
+
+class OrganizationOutcomesListResponse(BaseModel):
+    items: list[OrganizationOutcomeResponse]
+
+
+# list_outcomes_by_organization_voen spans every tender sharing one buyer's
+# VOEN, not one tender -- same reasoning as execution_ledger.py's
+# organization_router and this module's own forecast_snapshot_router: it
+# goes on the latter rather than `router`, which is prefixed
+# /tenders/{tender_id}.
+@forecast_snapshot_router.get("/organizations/{organization_voen}/outcomes", response_model=OrganizationOutcomesListResponse)
+async def get_organization_outcomes(
+    organization_voen: str,
+    conn: AsyncConnection = Depends(get_connection),
+    identity: Identity = Depends(require_permission("decision.outcome.read", get_current_identity)),
+) -> OrganizationOutcomesListResponse:
+    outcome_rows = await list_outcomes_by_organization_voen(conn, organization_voen=organization_voen)
+    items = []
+    for row in outcome_rows:
+        loss_reason_rows = await list_loss_reasons_by_outcome(conn, tender_outcome_id=row["id"])
+        items.append(
+            OrganizationOutcomeResponse(
+                outcome=_outcome_row_to_response(row),
+                loss_reasons=[_loss_reason_row_to_response(r) for r in loss_reason_rows],
+            )
+        )
+    return OrganizationOutcomesListResponse(items=items)

@@ -1160,3 +1160,37 @@ PASS
 **Дальше:** ветка `docs-worklog-task4c-closure` после переноса этих трёх фактов не содержит ничего уникального и удалена локально.
 
 **Блокеры:** нет.
+
+## 2026-08-12 — Задание: Phase 4, задача 4.D (Calibration loop), реализация (5 подзадач)
+
+**Контекст:** Task 4.D — последняя задача Phase 4 (`TENDER_INTELLIGENCE_SPEC.md` §7.4, P319). Ветка `phase4-task4d-calibration-loop`. План: `docs/superpowers/plans/2026-08-11-phase4-task4d-calibration-loop.md` (сам план уже явно объясняет, почему §7.4's буквальный объём не строится сейчас — таблица ниже повторяет его рассуждение как проверенный факт, не как план).
+
+**Сделано (по коммитам ветки, в порядке):**
+- `d46fa7d` — Task 1: migration `0017_calibration_loop.sql` (schema version 16→17), четыре append-only таблицы (`tender_outcomes`, `tender_loss_reasons`, `forecast_card_snapshots`, `forecast_card_tender_links`); `packages/decision/calibration_model.py` (`TenderOutcome`, `LossReason`; `OUTCOME_TYPES` — spec's `won`/`lost` плюс честный `cancelled` (иначе отменённый тендер лгал бы в статистике поражений); `LOSS_REASONS` — spec's три дословные категории плюс `other` с обязательной непустой заметкой (иначе реальная причина вне трёх была бы сфабрикована)); `packages/decision/calibration_store.py` — персистентность + `list_overhead_buffer_contributions`, закрывающая write-only пробел задачи 4.C (`fact_count` никогда не читался до этой задачи).
+- `2eac9b1` — Task 2: `apps/api_tender/routers/calibration.py` — четыре маршрута под `/tenders/{tender_id}` (`POST`/`GET /outcome`, `POST /outcome/loss-reasons`, `GET /overhead-buffer`). RBAC deny-by-default на каждом; `outcome_already_recorded`/`tender_not_decided_bid`/`outcome_not_a_loss` — чистые 4xx, проверенные до записи, а не 500 от миграционного `CHECK` (та же дисциплина, которую 4.C's шестой отложенный пункт как раз не соблюл); audit-лог на обеих мутациях.
+- `48fa27a` — Task 3: `packages/tender/forecast_snapshot_store.py` — персистентность `ForecastCard` (`packages/tender/forecast_card.py`, ранее вычислялась и отбрасывалась на каждый запрос) + человеко-подтверждённая связь снимок→тендер (сознательно не авто-матчинг — нет источника для алгоритма идентичности форекаст↔тендер) + `observed_lag_days` (измеренная длительность: earliest evidence `observed_at` снимка → `tenders.created_at`; названа везде `first_observed_at`, никогда "дата публикации" — реального поля публикации eTender не захватывает, `tenders.created_at` — момент нашей собственной первой загрузки). Второй роутер (`forecast_snapshot_router`) для маршрутов, не привязанных к одному тендеру.
+- `34c2a94` — Task 4: `packages/decision/calibration_summary.py` — `PriceComparison`/`compare_winner_to_our_basis` (чистая арифметика, не изобретённая формула: `winner_amount`/`our_submitted_amount` — человеческие факты, `our_scg_cost_basis` — сумма по `matching.py`'s уже вычисленному TCO-ранжированию на реальных vendor offers); каждая дельта обязательно несёт `coverage_line_count`/`total_line_count`/`is_partial_coverage` — частичное покрытие BOQ никогда не читается как маржа по всему тендеру (hard ban #3, применённый к арифметике, не только к пропущенным фактам); `summarize_loss_reasons`. Новый `GET /tenders/{tender_id}/calibration` повторно использует тот же путь `list_boq_lines_by_event → list_vendor_offers → match_boq_line`, что и уже существующий `GET /bid-readiness-candidate` — не дублирует его.
+- Task 5 (это задание, финальная): `list_outcomes_by_organization_voen` (`calibration_store.py`) — тот же join через latest-строку `tender_versions`, что и уже существующий `list_execution_facts_by_organization_voen` (`execution_ledger_store.py`) — намеренно переиспользован, чтобы "этот тендер принадлежит этому VOEN" значило одно и то же в обоих местах. Новый `GET /organizations/{organization_voen}/outcomes` на существующем `forecast_snapshot_router` (не привязан к одному тендеру, та же причина, что у `execution_ledger.py`'s `organization_router`), каждая запись несёт свои loss reasons.
+
+**Осознанно НЕ построено — §7.4 буквально НЕ удовлетворена, фиксируется явно, чтобы не создать впечатление, что P319 закрыт:**
+
+| §7.4 просит | Почему не построено сейчас |
+|---|---|
+| Цена победителя vs своя оценка рыночной себестоимости → где база SCG врёт | Оба операнда теперь реальны (Tasks 1, 2, 4), и арифметика (не формула) сравнивает их с обязательным покрытием — но **вердикт о том, какая из трёх spec-диагнозов («дыра в вендорах» / демпинг / «нарисованный» тендер) объясняет данную дельту, не выносится**: спецификация не даёт правила выбора между ними по одной дельте — человек читает дельту плюс записанные loss reasons и делает вывод сам. |
+| Пересчитанные веса DFE-сигналов | Блокировано на `TBD-TIS-02` (нужен ≥30-тендерный backtest, а ни один forecast card никогда не сохранялся до Task 3 этой задачи) — не изобретено. |
+| TTL/горизонты по покупателю | Блокировано на `TBD-TIS-01` — `ttl_class` остаётся строковой меткой без единого числа длительности где-либо в кодовой базе. |
+| Буфер накладных как cost-overlay на смету 4.A | Tasks 1-2 сделали сырые счётчики **читаемыми** — формулы взвешивания нет и не изобретена; сам overlay остаётся полностью нереализованным. |
+
+Построенное этой задачей — это **измерительный субстрат** (исходы, наши цены, разбор проигрышей по spec's собственным категориям, персистентные forecast cards с человеко-подтверждёнными связями и измеренным lag, читаемый буфер накладных), который делает калибровочные решения выше *отвечаемыми из реальных данных позже*, а не угаданными сейчас.
+
+**Вывод полного прогона (Fast+Full gate, реальный запуск этого задания, не взято из памяти):**
+```
+$ python -m pytest tests/ -q -m "not live_network"
+615 passed, 33 skipped, 3 deselected in 461.44s (0:07:41)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+All checks passed! / Success: no issues found in 100 source files / PASS: v1 untouched (v1 paths not present on this machine — baseline check skipped, no forbidden literals found)
+```
+
+**Дальше:** Phase 4 — все четыре задачи (4.A/4.B/4.C/4.D) закрыты кодом. `TENDER_INTELLIGENCE_SPEC.md` §7's контур Execution Ledger → Decision Core → Calibration построен как измерительный контур, **не** как полностью откалиброванная система (см. таблицу выше — это не подразумеваемая деталь, это явное невыполнение). Восемь отложенных пунктов записаны отдельно в `docs/decisions/OPEN-QUESTIONS.md` (2026-08-12). Вопрос "закрывается ли exit gate Phase 4 с контуром, который *записывает*, но ещё не *калибрует*" — решение владельца (`AGENTS.md` §4); P319's собственная формулировка ("после N закрытых циклов… статистически точнее") непроверяема, пока N реальных циклов не накопится.
+
+**Блокеры:** нет новых. `TBD-TIS-01`/`TBD-TIS-02`/`D-VND-REP` остаются некритичными для GO этой задачи, как и во всех предыдущих фазах — их закрытие требует владельческого research/approval гейта, не кода.

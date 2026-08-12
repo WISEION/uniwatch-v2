@@ -117,6 +117,39 @@ async def list_loss_reasons_by_outcome(conn: AsyncConnection, *, tender_outcome_
     return [dict(row) for row in rows]
 
 
+async def list_outcomes_by_organization_voen(conn: AsyncConnection, *, organization_voen: str) -> list[dict[str, Any]]:
+    """Same tender_versions latest-row join shape as
+    list_execution_facts_by_organization_voen (execution_ledger_store.py) --
+    reused verbatim rather than re-derived, so a buyer's outcomes and its
+    execution facts agree on what "this tender belongs to this VOEN" means."""
+    rows = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT o.id, o.tender_id, o.outcome, o.our_submitted_amount, o.winner_name, o.winner_amount,
+                           o.currency, o.announced_at, o.source_ref, o.entered_by, o.entered_at
+                    FROM tender_outcomes o
+                    WHERE o.tender_id IN (
+                        SELECT tender_id FROM (
+                            SELECT DISTINCT ON (tender_id) tender_id, normalized_fields
+                            FROM tender_versions
+                            ORDER BY tender_id, id DESC
+                        ) latest
+                        WHERE latest.normalized_fields ->> 'organization_voen' = :organization_voen
+                    )
+                    ORDER BY o.tender_id, o.id
+                    """
+                ),
+                {"organization_voen": organization_voen},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
 async def list_overhead_buffer_contributions(conn: AsyncConnection, *, tender_id: int) -> list[dict[str, Any]]:
     rows = (
         (

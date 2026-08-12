@@ -138,6 +138,47 @@ async def _make_tender(engine, *, identity_key: str, event_id: int) -> int:
         return tender_id
 
 
+async def _make_decided_tender_with_voen(engine, *, identity_key: str, event_id: int, organization_voen: str) -> int:
+    """Same tender_versions.normalized_fields['organization_voen'] shape as
+    test_execution_ledger_store.py's
+    test_list_execution_facts_by_organization_voen_matches_across_tenders --
+    list_outcomes_by_organization_voen joins through the identical
+    latest-tender_version query."""
+    async with engine.begin() as conn:
+        raw_snapshot_id = await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="event_details",
+            identity_key=identity_key,
+            raw_body=json.dumps({"eventId": event_id}).encode("utf-8"),
+            contract_version="v1",
+            correlation_id=f"test-calibration-api-{identity_key}",
+        )
+        tender_id = await get_or_create_tender(conn, source="etender", identity_key=identity_key)
+        await create_normalized_version(
+            conn,
+            tender_id=tender_id,
+            raw_snapshot_id=raw_snapshot_id,
+            parser_version="v1",
+            normalized_fields={"id": event_id, "organization_voen": organization_voen},
+        )
+        await store_decision(
+            conn,
+            Decision(
+                tender_id=tender_id,
+                decision_type="bid",
+                conditions=(),
+                deadline=None,
+                justification="organization rollup test fixture",
+                actor="pm-1",
+                decided_at=NOW,
+                go_no_go_inputs_id=None,
+                bid_readiness_candidate_id=None,
+            ),
+        )
+        return tender_id
+
+
 @pytest_asyncio.fixture
 async def decided_tender_id(engine):
     tender_id = await _make_tender(engine, identity_key="test-calibration-api-decided-tender", event_id=101)
@@ -698,3 +739,53 @@ async def test_get_calibration_returns_price_comparison_with_coverage_and_loss_r
     assert comparison["total_line_count"] == 1
     # Full coverage on this tender's one matchable line -- not partial.
     assert comparison["is_partial_coverage"] is False
+
+
+async def test_get_organization_outcomes_without_auth_is_401(client):
+    r = await client.get("/organizations/1000000001/outcomes")
+    assert r.status_code == 401
+
+
+async def test_get_organization_outcomes_authenticated_without_permission_is_403(client, user_without_permissions):
+    r = await client.get("/organizations/1000000001/outcomes", headers=_auth(user_without_permissions))
+    assert r.status_code == 403
+
+
+async def test_get_organization_outcomes_matches_across_tenders_and_carries_loss_reasons(client, pm_user, engine):
+    tender_a = await _make_decided_tender_with_voen(
+        engine, identity_key="test-calibration-api-org-a", event_id=301, organization_voen="1000000001"
+    )
+    tender_b = await _make_decided_tender_with_voen(
+        engine, identity_key="test-calibration-api-org-b", event_id=302, organization_voen="1000000001"
+    )
+    tender_c = await _make_decided_tender_with_voen(
+        engine, identity_key="test-calibration-api-org-c", event_id=303, organization_voen="9999999999"
+    )
+
+    await client.post(f"/tenders/{tender_a}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(
+        f"/tenders/{tender_a}/outcome/loss-reasons",
+        json={"loss_reason": "dumping", "note": "30% under our cost"},
+        headers=_auth(pm_user),
+    )
+    await client.post(
+        f"/tenders/{tender_b}/outcome",
+        json=_payload(outcome="won", winner_name=None, winner_amount=None),
+        headers=_auth(pm_user),
+    )
+    # A different buyer (VOEN) -- must not appear in "1000000001"'s rollup.
+    await client.post(f"/tenders/{tender_c}/outcome", json=_payload(), headers=_auth(pm_user))
+
+    r = await client.get("/organizations/1000000001/outcomes", headers=_auth(pm_user))
+    assert r.status_code == 200
+    body = r.json()
+
+    tender_ids = {item["outcome"]["tender_id"] for item in body["items"]}
+    assert tender_ids == {tender_a, tender_b}
+
+    item_a = next(item for item in body["items"] if item["outcome"]["tender_id"] == tender_a)
+    assert [lr["loss_reason"] for lr in item_a["loss_reasons"]] == ["dumping"]
+
+    item_b = next(item for item in body["items"] if item["outcome"]["tender_id"] == tender_b)
+    assert item_b["outcome"]["outcome"] == "won"
+    assert item_b["loss_reasons"] == []
