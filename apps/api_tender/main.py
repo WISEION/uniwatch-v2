@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from packages.platform.app_factory import build_app
 from packages.platform.settings import Settings
 
-from .routers import admin_users, decision, execution_ledger
+from .routers import admin_users, calibration, decision, execution_ledger
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -22,6 +22,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             decision.router,
             execution_ledger.router,
             execution_ledger.organization_router,
+            calibration.router,
         ],
         settings=settings,
     )
