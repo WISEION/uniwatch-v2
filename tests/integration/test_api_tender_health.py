@@ -30,7 +30,7 @@ async def test_readiness_ok_when_schema_matches(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["schema_version"] == 18
+    assert body["schema_version"] == 19
 
 
 async def test_readiness_fails_on_schema_mismatch(engine, _database_url, migrated_asyncpg_dsn):

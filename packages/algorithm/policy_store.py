@@ -14,7 +14,18 @@ a write rather than only relying on absence of an update path).
 policy_versions.status is the one legitimately mutable column --
 transition_version_status is the only function that changes it, always
 through can_transition() and always logging to
-policy_version_transitions."""
+policy_version_transitions.
+
+Task 5.B layers three named, purpose-specific functions on top of
+transition_version_status without changing its behavior (5.A's own tests
+keep passing unmodified): submit_for_approval() gates the
+risk_review->approved transition on packages/algorithm/policy_validator.py's
+structural/branch-coverage checks plus two DB-backed checks this module
+owns (required_role existence, financial-impact-node dossier
+approval); activate_version() gates approved/suspended->active on
+maker/checker (FR-ALG-12/ADR-0005) and enforces "one active version per
+graph" (a courtesy on top of the migration's own partial unique index);
+kill_switch() is a reason-mandatory wrapper around active->suspended."""
 
 from __future__ import annotations
 
@@ -26,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from .policy_lifecycle import can_transition
 from .policy_model import IMMUTABLE_STATUSES, PolicyEdge, PolicyGraph, PolicyNode, PolicyVersion
+from .policy_validator import ValidationIssue, validate_graph
 
 
 class ImmutableVersionError(ValueError):
@@ -33,6 +45,20 @@ class ImmutableVersionError(ValueError):
 
 
 class InvalidTransitionError(ValueError):
+    pass
+
+
+class GraphInvalidError(ValueError):
+    """Raised by submit_for_approval() -- carries every issue found (not
+    just the first), matching this codebase's existing "surface everything"
+    pattern (e.g. packages/decision/boq_summary.py)."""
+
+    def __init__(self, issues: tuple[ValidationIssue, ...]) -> None:
+        self.issues = issues
+        super().__init__("policy version failed validation: " + "; ".join(f"{i.code}: {i.message}" for i in issues))
+
+
+class MakerCheckerViolation(ValueError):
     pass
 
 
@@ -255,6 +281,136 @@ async def transition_version_status(
             "changed_by": changed_by,
             "reason": reason,
         },
+    )
+
+
+async def _unknown_role_issues(conn: AsyncConnection, nodes: list[dict[str, Any]]) -> list[ValidationIssue]:
+    required_roles = {n["required_role"] for n in nodes if n.get("required_role")}
+    if not required_roles:
+        return []
+    rows = await conn.execute(text("SELECT name FROM roles WHERE name = ANY(:names)"), {"names": list(required_roles)})
+    existing = {r[0] for r in rows}
+    return [
+        ValidationIssue("unknown_role", f"required_role {role!r} does not exist in roles")
+        for role in sorted(required_roles - existing)
+    ]
+
+
+async def _missing_dossier_issues(
+    conn: AsyncConnection, *, policy_version_id: int, nodes: list[dict[str, Any]]
+) -> list[ValidationIssue]:
+    if not any(n.get("financial_impact") for n in nodes):
+        return []
+    row = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT pv.research_dossier_id, rd.approved_at
+                    FROM policy_versions pv
+                    LEFT JOIN research_dossiers rd ON rd.id = pv.research_dossier_id
+                    WHERE pv.id = :id
+                    """
+                ),
+                {"id": policy_version_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None or row["research_dossier_id"] is None or row["approved_at"] is None:
+        return [
+            ValidationIssue(
+                "missing_approved_dossier",
+                "version has a financial_impact node but no linked, approved research dossier",
+            )
+        ]
+    return []
+
+
+async def submit_for_approval(
+    conn: AsyncConnection, *, policy_version_id: int, changed_by: str, reason: str | None = None
+) -> None:
+    """FR-ALG-03/FR-ALG-04/FR-ALG-20's gate -- the one blocking point before
+    a version may reach `approved`. Nothing is written if any issue is
+    found; GraphInvalidError carries the complete list."""
+    nodes = await list_nodes(conn, policy_version_id=policy_version_id)
+    edges = await list_edges(conn, policy_version_id=policy_version_id)
+
+    issues = list(validate_graph(nodes, edges))
+    issues += await _unknown_role_issues(conn, nodes)
+    issues += await _missing_dossier_issues(conn, policy_version_id=policy_version_id, nodes=nodes)
+
+    if issues:
+        raise GraphInvalidError(tuple(issues))
+
+    await transition_version_status(
+        conn, policy_version_id=policy_version_id, to_status="approved", changed_by=changed_by, reason=reason
+    )
+
+
+async def activate_version(conn: AsyncConnection, *, policy_version_id: int, changed_by: str, reason: str | None = None) -> None:
+    """FR-ALG-12/ADR-0005's activation gate + "one active version per
+    graph" (structurally guaranteed by migrations/0019's partial unique
+    index; the auto-suspend below is a courtesy that keeps the common path
+    from ever hitting it, not the enforcement itself). can_transition
+    (inside transition_version_status) already rejects activating a
+    version that isn't currently approved/suspended -- this is also how
+    rollback works: calling this against a suspended version is exactly
+    "reactivate a previously-active version"."""
+    row = (
+        (
+            await conn.execute(
+                text("SELECT policy_graph_id, created_by FROM policy_versions WHERE id = :id"),
+                {"id": policy_version_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        raise ValueError(f"no such policy_version: {policy_version_id}")
+
+    nodes = await list_nodes(conn, policy_version_id=policy_version_id)
+    if any(n.get("financial_impact") for n in nodes) and changed_by == row["created_by"]:
+        raise MakerCheckerViolation(
+            f"activator {changed_by!r} is the same identity that designed this financial-impact "
+            "version (FR-ALG-12/ADR-0005 requires two distinct identities)"
+        )
+
+    current_active = (
+        await conn.execute(
+            text("SELECT id FROM policy_versions WHERE policy_graph_id = :graph_id AND status = 'active'"),
+            {"graph_id": row["policy_graph_id"]},
+        )
+    ).scalar_one_or_none()
+    if current_active is not None and current_active != policy_version_id:
+        await transition_version_status(
+            conn,
+            policy_version_id=current_active,
+            to_status="suspended",
+            changed_by=changed_by,
+            reason=f"superseded by activation of policy_version {policy_version_id}",
+        )
+
+    await transition_version_status(
+        conn, policy_version_id=policy_version_id, to_status="active", changed_by=changed_by, reason=reason
+    )
+
+
+async def kill_switch(conn: AsyncConnection, *, policy_version_id: int, changed_by: str, reason: str) -> None:
+    """FR-ALG-13 -- a reason-mandatory, clearly-named wrapper around
+    active->suspended. Only the "stop new evaluations" half is built: this
+    codebase has no evaluation/execution engine yet, so "in-flight
+    evaluations complete in a defined way" has nothing to act on (recorded
+    as a real gap in docs/decisions/OPEN-QUESTIONS.md, not fabricated)."""
+    if not reason.strip():
+        raise ValueError("kill_switch requires a non-empty reason")
+    status = await _get_version_status(conn, policy_version_id=policy_version_id)
+    if status != "active":
+        raise ValueError(f"kill_switch requires an active version; policy_version {policy_version_id} is {status!r}")
+    await transition_version_status(
+        conn, policy_version_id=policy_version_id, to_status="suspended", changed_by=changed_by, reason=reason
     )
 
 
