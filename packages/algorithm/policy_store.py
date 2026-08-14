@@ -472,6 +472,25 @@ async def list_edges(conn: AsyncConnection, *, policy_version_id: int) -> list[d
     return [dict(row) for row in rows]
 
 
+async def get_version(conn: AsyncConnection, *, policy_version_id: int) -> dict[str, Any] | None:
+    row = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT id, policy_graph_id, version_number, status, research_dossier_id, created_by, created_at
+                    FROM policy_versions WHERE id = :id
+                    """
+                ),
+                {"id": policy_version_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    return dict(row) if row is not None else None
+
+
 async def list_versions_by_graph(conn: AsyncConnection, *, policy_graph_id: int) -> list[dict[str, Any]]:
     rows = (
         (
