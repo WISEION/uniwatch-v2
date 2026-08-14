@@ -14,6 +14,8 @@ Tender / Vendor / Decision Intelligence for Unico QSC. Top-level navigation is e
 - Vendors: **synthetic only** (watermark `SYNTHETIC`, deterministic seed, strict isolation from real data) until a separate legal gate.
 - Algorithm page: a versionable policy-graph builder with `Human` / `Rule` / `Gate` node types. ML is advisory-only and blocked until Phase 8.
 - RBAC: deny-by-default; no `dev_team`-style all-access role.
+- **Resolved 2026-08-14 (owner decision, `D-HOST`):** Hosting is **local network only** — no private/public cloud. Unblocks Phase 6 task 6.A's hosting-topology row; deployment pipeline/immutable-image-digest work can target a local-network target directly, no cloud provider abstraction needed.
+- **Resolved 2026-08-14 (owner decision, `D-IDP`):** Pilot identity/auth is **lightweight local auth** built on the already-existing `users`/`roles`/`role_permissions` tables (`packages/platform/rbac`) — a real (not dev-bypass) login, but no external IdP (no Entra/OIDC) and no break-glass procedure, since the pilot is local-network-only and not internet-facing. This replaces `apps/api_tender/deps.py`'s current dev-only `X-Dev-User` header for the pilot, once built — not done yet, tracked as Phase 6 task 6.A work. Unblocks Phase 6 task 6.A's identity-integration row.
 
 ## Hard bans (NEG-01..07, PRD §2)
 
@@ -64,12 +66,10 @@ Phase 0 (Foundation) + Phase 1 (Tender ingestion core). Full task breakdown: `do
 
 | ID | Question | Blocks |
 |---|---|---|
-| D-HOST | Hosting: local network / private cloud / public cloud | Phase 0 production part / Phase 6 |
-| D-IDP | Identity: Entra/OIDC for pilot, incl. break-glass | Phase 0 auth part / Phase 6 |
 | D-SRC | Additional real tender sources, history range, snapshot retention | Full-volume close of Phase 1 (not the connector start) |
 | D-LANG | First UI language and AZ/RU/EN order | Phase 2 |
 
-D-PILOT, D-TAX, D-FIN, D-PII, D-SLO, D-ML block Phase 3+, out of Mission 1. `TBD-01..05` (SLO/RPO/RTO/ML thresholds/financial weights/budget) stay unresolved — never defaulted (see `AGENTS.md` §2.2).
+`D-HOST`/`D-IDP` **resolved 2026-08-14** — see Locked decisions above; this was the one pair `PLAN-MISSION-6.md` §1 named as blocking Phase 6's *start* (task 6.A), not just a sub-task, so their resolution is what actually opens Phase 6 for planning. `D-PILOT` (pilot users/permission matrix, blocks Phase 6 task 6.D specifically) and `D-SLO` (SLO numbers, blocks Phase 6 task 6.C's numbers, not its mechanism) remain open — Phase 6 task 6.A can proceed without them. `D-TAX`, `D-FIN`, `D-PII`, `D-ML` block Phase 3+/7/8 sub-parts, already resolved-around in those phases' own mechanism-building. `TBD-01..05` (SLO/RPO/RTO/ML thresholds/financial weights/budget) stay unresolved — never defaulted (see `AGENTS.md` §2.2).
 
 ## Where things live
 

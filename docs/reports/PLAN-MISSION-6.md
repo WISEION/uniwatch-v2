@@ -1,6 +1,6 @@
 # PLAN-MISSION-6 — Phase 6: Controlled pilot / shadow production
 
-**Статус:** ЧЕРНОВИК. Активируется только после GO супервайзера по Exit gate Phase 5 (PLAN-MISSION-5.md).
+**Статус:** ЧЕРНОВИК. Активируется только после GO супервайзера по Exit gate Phase 5 (PLAN-MISSION-5.md). **`D-HOST`/`D-IDP` — единственная пара, формально блокировавшая старт задачи 6.A (см. §1) — решены владельцем 2026-08-14** (`docs/CONTEXT.md`'s Locked decisions, `docs/decisions/OPEN-QUESTIONS.md` того же числа): hosting = local network only; identity = lightweight local auth поверх уже существующих `users`/`roles`/`role_permissions` (`packages/platform/rbac`), без внешнего IdP и без break-glass (пилот не internet-facing). Это разблокирует именно старт 6.A — сам ЧЕРНОВИК-статус этого файла и запрет "не начинать без GO по Phase 5" остаются в силе.
 **Дата:** 2026-08-04
 **Приоритет источников:** PRD v1.1 > master plan §22-24, §18 Phase 6 > v1 audit.
 **Зависимость:** Exit gate Phase 5 принят (ALGORITHM builder работает с Human/Rule/Gate nodes).
@@ -12,7 +12,7 @@
 
 ## 1. Дисциплина выполнения
 
-Наследуется из PLAN-MISSION-1 §1. **Ключевое отличие Mission 6:** это первая миссия, где решения блокируют не только qa-задачу в конце, а старт фазы целиком — **D-HOST и D-IDP должны быть отвечены до задачи 6.A**, иначе pilot-инфраструктуру негде разворачивать и некому логиниться. Это единственная миссия плана, которая формально не может начаться без ответа владельца (в отличие от Phase 0-5, где D-* блокировали только под-задачи).
+Наследуется из PLAN-MISSION-1 §1. **Ключевое отличие Mission 6:** это первая миссия, где решения блокируют не только qa-задачу в конце, а старт фазы целиком — **D-HOST и D-IDP должны были быть отвечены до задачи 6.A**, иначе pilot-инфраструктуру негде разворачивать и некому логиниться. Это была единственная миссия плана, формально не способная начаться без ответа владельца (в отличие от Phase 0-5, где D-* блокировали только под-задачи) — **оба вопроса решены владельцем 2026-08-14** (см. banner выше), поэтому задача 6.A теперь может планироваться, как только будет GO по Exit gate Phase 5.
 
 ---
 
@@ -30,8 +30,8 @@ Exit gate: нет критических нерешённых потерь да�
 
 | Задача | Требования |
 |---|---|
-| Hosting topology по решению D-HOST; deployment pipeline с immutable image digest | NFR-ARC-06 (наследие), D-HOST |
-| Identity/auth интеграция по решению D-IDP (Entra/OIDC), включая break-glass процедуру | NFR-SEC-06 (наследие), D-IDP |
+| Hosting topology: local network only (решено 2026-08-14) — deployment pipeline с immutable image digest, целевая среда без облачного провайдера | NFR-ARC-06 (наследие), D-HOST (resolved) |
+| Identity/auth: lightweight local auth поверх `users`/`roles`/`role_permissions` (решено 2026-08-14, не Entra/OIDC — pilot не internet-facing, break-glass не нужен); заменяет `apps/api_tender/deps.py`'s dev-only `X-Dev-User` для пилота | NFR-SEC-06 (наследие), D-IDP (resolved) |
 | Shadow comparison harness: bounded source/date range, сравнение count/IDs/status/details/BOQ между v1 и v2; классификация расхождений (v1 loss / v2 defect / source drift / expected semantic difference); v2 не пишет обратно в v1 | FR-MIG-03, master plan §24.4 |
 | Cutover criteria и rollback plan утверждаются заранее (документ, не код) — rollback оставляет v1 доступной | master plan §24.4 |
 
