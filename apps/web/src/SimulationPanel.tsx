@@ -104,7 +104,7 @@ export function SimulationPanel({ client, versionId }: SimulationPanelProps) {
                   <th scope="col">Case</th>
                   <th scope="col">Status</th>
                   <th scope="col">Terminal</th>
-                  <th scope="col"></th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>

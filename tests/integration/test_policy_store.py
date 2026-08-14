@@ -29,6 +29,7 @@ from packages.algorithm.policy_store import (
 )
 from packages.algorithm.research_dossier_model import ResearchDossier
 from packages.algorithm.research_dossier_store import link_dossier_to_version, store_research_dossier
+from packages.algorithm.simulation_engine import SimulationCase, run_case
 
 
 def _node(policy_version_id: int, node_key: str = "check_qualification", **overrides) -> PolicyNode:
@@ -420,3 +421,95 @@ async def test_kill_switch_suspends_active_version_and_logs_reason(engine):
     assert status == "suspended"
     kill_transition = next(t for t in transitions if t["to_status"] == "suspended")
     assert kill_transition["reason"] == "incident-123"
+
+
+async def test_rollback_rehearsal_restores_active_versions_behavior_and_keeps_transition_log_visible(engine):
+    """Phase 5, task 5.E (FR-ALG-14) -- PLAN-MISSION-5.md Section5's own exit-gate wording is
+    "откат к предыдущей approved версии восстанавливает поведение, журнал переходов виден" (rollback to a
+    previously-approved version restores behavior, transition log is visible). 5.B's own
+    test_activate_version_rollback_reactivates_a_suspended_version only asserted the status flip; this
+    test additionally proves BEHAVIOR is restored (via 5.C's simulation engine, run against whichever
+    version list_versions_by_graph currently reports as active -- not a hardcoded version id) and that the
+    full transition history remains visible across the whole rehearsal, not just the rollback step."""
+    async with engine.begin() as conn:
+        graph_id, version_1_id = await _new_graph_and_draft(conn)
+        await add_nodes(conn, [_node(version_1_id, "start", node_type="gate", reason_codes=("v1_result",))])
+        await _to_risk_review(conn, version_1_id)
+        await submit_for_approval(conn, policy_version_id=version_1_id, changed_by="reviewer")
+        await activate_version(conn, policy_version_id=version_1_id, changed_by="designer")
+
+        version_2_id = await create_draft_version(conn, policy_graph_id=graph_id, version_number=2, created_by="designer")
+        await add_nodes(conn, [_node(version_2_id, "start", node_type="gate", reason_codes=("v2_result",))])
+        await _to_risk_review(conn, version_2_id)
+        await submit_for_approval(conn, policy_version_id=version_2_id, changed_by="reviewer")
+        await activate_version(conn, policy_version_id=version_2_id, changed_by="designer")
+
+        case = SimulationCase(case_id="c1", inputs={})
+        nodes_v2 = await list_nodes(conn, policy_version_id=version_2_id)
+        edges_v2 = await list_edges(conn, policy_version_id=version_2_id)
+        trace_before_rollback = run_case(nodes_v2, edges_v2, case)
+        assert trace_before_rollback.reason_codes == ("v2_result",)  # confirms the two versions really differ
+
+        # Rollback: reactivate version 1 (currently `suspended`, per 5.B's activate_version).
+        await activate_version(conn, policy_version_id=version_1_id, changed_by="designer")
+
+        versions = await list_versions_by_graph(conn, policy_graph_id=graph_id)
+        active_version = next(v for v in versions if v["status"] == "active")
+        assert active_version["id"] == version_1_id  # not hardcoded -- this is what "current" means post-rollback
+
+        nodes_active = await list_nodes(conn, policy_version_id=active_version["id"])
+        edges_active = await list_edges(conn, policy_version_id=active_version["id"])
+        trace_after_rollback = run_case(nodes_active, edges_active, case)
+
+        transitions_v1 = await list_transitions_by_version(conn, policy_version_id=version_1_id)
+
+    assert trace_after_rollback.reason_codes == ("v1_result",)  # behavior restored, not v2's
+    assert [t["to_status"] for t in transitions_v1] == [
+        "simulation",
+        "business_review",
+        "risk_review",
+        "approved",
+        "active",
+        "suspended",
+        "active",
+    ]  # the full lifecycle, including the rollback step itself, stays visible in one log
+
+
+async def test_kill_switch_rehearsal_preserves_prior_journal_and_allows_reactivation(engine):
+    """Phase 5, task 5.E (FR-ALG-13) -- proves the kill switch is a real, auditable incident-response
+    action, not a destructive one: every transition recorded before the kill switch survives unchanged
+    (by id and content), and the version can be reactivated afterward rather than being a dead end."""
+    async with engine.begin() as conn:
+        _, version_id = await _new_graph_and_draft(conn)
+        await add_nodes(conn, [_node(version_id, "start")])
+        await _to_risk_review(conn, version_id)
+        await submit_for_approval(conn, policy_version_id=version_id, changed_by="reviewer")
+        await activate_version(conn, policy_version_id=version_id, changed_by="designer")
+
+        transitions_before = await list_transitions_by_version(conn, policy_version_id=version_id)
+        assert len(transitions_before) == 5  # draft->simulation->business_review->risk_review->approved->active
+
+        await kill_switch(conn, policy_version_id=version_id, changed_by="oncall", reason="incident-123")
+        transitions_after_kill = await list_transitions_by_version(conn, policy_version_id=version_id)
+
+        before_by_id = {t["id"]: t for t in transitions_before}
+        after_by_id = {t["id"]: t for t in transitions_after_kill}
+        for transition_id, original_row in before_by_id.items():
+            assert after_by_id[transition_id] == original_row  # nothing about prior history changed
+        assert len(transitions_after_kill) == len(transitions_before) + 1
+
+        status_after_kill = (
+            await conn.execute(text("SELECT status FROM policy_versions WHERE id = :id"), {"id": version_id})
+        ).scalar_one()
+        assert status_after_kill == "suspended"
+
+        # Reversible: kill switch is not a dead end for the version.
+        await activate_version(conn, policy_version_id=version_id, changed_by="designer")
+        status_after_reactivation = (
+            await conn.execute(text("SELECT status FROM policy_versions WHERE id = :id"), {"id": version_id})
+        ).scalar_one()
+        transitions_final = await list_transitions_by_version(conn, policy_version_id=version_id)
+
+    assert status_after_reactivation == "active"
+    assert len(transitions_final) == len(transitions_before) + 2
+    assert transitions_final[-1]["to_status"] == "active"
