@@ -1355,3 +1355,41 @@ $ cd apps/web && npm test && npm run build
 **Дальше:** Task 5.D закрыта в границах плана. Следующий шаг по `PLAN-MISSION-5.md` §3 — задача 5.E (security/qa, последняя, закрывает ворота Phase 5). Записанные в этой задаче допущения (outline-only scope, новые permission-строки, tech-стек фронтенда, `get_version()` addition) зафиксированы в `docs/decisions/OPEN-QUESTIONS.md`. Открыта ветка `phase5-task5d-algoritm-frontend`, PR ожидает отдельного approver'а (hard ban #6).
 
 **Блокеры:** нет новых. Canvas/diff/PDF-export/live-impact-counter пробелы не блокируют 5.E — критерий accessibility 5.E проверяется против того, что реально построено (outline view), не против ненаписанного canvas.
+
+## 2026-08-14 — Задание: Phase 5, задача 5.E (АЛГОРИТМ: security/qa exit-gate suite), реализация — Exit gate Phase 5
+
+**Контекст:** Пятая, последняя задача Phase 5 (`docs/reports/PLAN-MISSION-5.md` §3 task 5.E) — закрывает ворота фазы. План: `docs/superpowers/plans/2026-08-14-phase5-task5e-algoritm-exit-gate.md`. Перед написанием кода проведён аудит существующих доказательств против §5's пяти критериев — четыре из пяти уже полностью доказаны тестами 5.A-5.D как побочный эффект построения механизма; эта задача построила только два реальных пробела (rollback/kill-switch rehearsal с более сильными assertion'ами) плюс единственный критерий, который до этой задачи не мог быть доказан вообще (автоматизированный accessibility-скан).
+
+**Сделано:**
+- `tests/integration/test_policy_store.py` — два новых теста: `test_rollback_rehearsal_restores_active_versions_behavior_and_keeps_transition_log_visible` (использует `simulation_engine.run_case` (5.C) для доказательства, что поведение графа, а не только его статус, восстанавливается при откате — версия ищется динамически через `list_versions_by_graph`, не хардкодом; плюс полный transition-лог из 7 записей виден целиком) и `test_kill_switch_rehearsal_preserves_prior_journal_and_allows_reactivation` (доказывает, что все transition-записи ДО kill switch остаются байт-в-байт неизменными, и что версия реактивируема после — kill switch не тупик).
+- `apps/web/src/accessibility.test.tsx` — реальный `axe-core` (через `vitest-axe`) скан всех экранов 5.D: `App`, `PolicyOutline` (с показанными validation issues), `SimulationPanel` (с результатами запуска и раскрытым execution trace), `TransitionHistory`. Скан нашёл и эта задача исправила одно настоящее нарушение: пустой `<th scope="col">` в таблице результатов `SimulationPanel` (`empty-table-header` — нет текста для screen reader) — исправлено видимым текстом "Actions".
+- `vitest.setup.ts` — зарегистрирован `vitest-axe`'s matcher через `expect.extend()` (пакет's собственный `extend-expect` импорт добавляет только TypeScript-типы, не runtime-matcher — реальная ловушка, зафиксирована, не обойдена молча).
+
+**Осознанно НЕ построено / зафиксированная интерпретация:**
+- "Kill switch останавливает новые evaluations" (`FR-ALG-13`) читается как остановка будущей production-маршрутизации, не как гейт для `POST /policy-versions/{id}/simulate` — simulation/backtest должен оставаться доступным независимо от lifecycle-статуса версии (аналитику нужно уметь симулировать уже killed-версию, чтобы понять, что случилось). В кодовой базе по-прежнему нет production evaluation/routing engine — тот же честный пробел, что и в 5.B/5.C, этой задачей не тронут.
+
+**Exit gate Phase 5 (`docs/reports/PLAN-MISSION-5.md` §5) — доказательства:**
+
+| Критерий | Доказательство |
+|---|---|
+| Active policy immutable | `tests/integration/test_policy_store.py::test_approved_version_content_is_immutable`, `::test_active_version_content_is_also_immutable`, `::test_fork_new_draft_version_copies_content_into_a_new_version` (5.A/5.B) |
+| Невалидный граф не активируется | `::test_submit_for_approval_rejects_unreachable_node_without_changing_status` (5.B), `tests/integration/test_algoritm_api.py::test_submit_for_approval_rejects_invalid_graph` (5.D, реальный HTTP) |
+| Каждая ветвь протестирована | `::test_submit_for_approval_rejects_uncovered_rule_branch` / `::test_submit_for_approval_accepts_covered_rule_branch` (5.B) |
+| Two-person activation для financial policy | `::test_activate_version_rejects_same_maker_and_checker_for_financial_node` / `accepts_different_maker_and_checker` (5.B), `test_algoritm_api.py::test_financial_impact_node_activation_requires_two_distinct_identities` (5.D) |
+| Rollback/kill switch отрепетированы | `::test_rollback_rehearsal_restores_active_versions_behavior_and_keeps_transition_log_visible`, `::test_kill_switch_rehearsal_preserves_prior_journal_and_allows_reactivation` (обе новые, эта задача) |
+| Accessibility (доп. критерий FR-UX-02, PLAN-MISSION-5.md §3 5.E) | `apps/web/src/accessibility.test.tsx` — 4 axe-core скана, 0 нарушений после исправления `SimulationPanel.tsx` |
+
+**Отклонение от инструкции (зафиксировано, не молча) — полный прогон `pytest tests/` не завершён в этой сессии:** Docker/testcontainers стал нестабилен в середине этой задачи — три попытки прогнать `python -m pytest tests/ -q -m "not live_network"` были прерваны сигналом SIGKILL против postgres-контейнера ещё до завершения (`docker events` подтверждает: контейнер `hungry_leavitt` убит на 924-й секунде, следующая попытка `eloquent_yonath` — уже на 89-й секунде, `bold_engelbart` — на 123-й, `interesting_hypatia` — почти сразу; ухудшение с каждой попыткой, не связанное с изменениями этой задачи). Оба предыдущих полных прогона в этой же сессии (задания 5.C и 5.D) прошли чисто (649s и 927s соответственно) — нестабильность возникла именно после этого, в середине работы над 5.E, по причинам вне кода этого репозитория. Вместо повторных попыток вслепую — по явному решению владельца, спрошенному напрямую в чате — задача закрывается на основе уже собранных, реальных доказательств:
+```
+$ python -m pytest tests/integration/test_policy_store.py -q
+25 passed in 90.95s (0:01:30)   # включая оба новых rehearsal-теста, прогнано ДО начала нестабильности Docker
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+325 files already formatted / All checks passed! / Success: no issues found in 112 source files / PASS: v1 untouched
+$ cd apps/web && npm test && npm run build
+12 passed (Vitest, включая 4 accessibility-теста) / tsc --noEmit + vite build: clean, 0 type errors
+```
+Полный `pytest tests/` (весь репозиторий, включая уже существовавшие ~700 тестов вне этой задачи) не переподтверждён в этой сессии — новый код этой задачи изолирован (два теста в уже существующем файле, независимо прогнанном; фронтенд независимо прогнан и собран), поэтому риск регрессии в непричастном коде минимален, но это не то же самое, что реальное подтверждение. Нужен повторный полный прогон, когда Docker на этой машине стабилизируется — не блокирует эту задачу технически, но честно зафиксирован как открытый пункт.
+
+**Дальше:** Task 5.E закрыта в границах собранных доказательств. Phase 5 (АЛГОРИТМ) технически завершена: 5.A/5.B/5.C/5.D/5.E сделаны, все критерии Exit gate §5 имеют доказательства. Ожидание вердикта супервайзера/владельца по Exit gate Phase 5 перед стартом Phase 6 (`AGENTS.md` §4). Открытые пункты, не блокирующие технически: `FR-ALG-06` (sensitivity analysis) остаётся нереализован — нет weight/threshold схемы; canvas-редактор/version diff/PDF export (5.D) остаются нереализованы — записаны как честные пробелы, не изобретены; полный repo-wide pytest прогон нуждается в повторном подтверждении после стабилизации Docker (см. выше). `D-FIN` остаётся единственным содержательным блокером — но только для активации первой реальной financial policy, не для построенного в Phase 5 механизма. Открыты ветки `phase5-task5c-...` (PR #34), `phase5-task5d-...` (PR #35), `phase5-task5e-...` (PR ожидается) — все три ждут отдельного approver'а (hard ban #6), смёржить нужно по порядку (5.C → 5.D → 5.E).
+
+**Блокеры:** Docker/testcontainers нестабильность на этой машине (см. выше) — не блокер самой задачи 5.E (доказательства собраны иными прогонами), но блокирует повторное полное подтверждение всего репозитория до починки окружения.
