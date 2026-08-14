@@ -994,3 +994,17 @@ GET https://search.worldbank.org/api/v3/projects?format=json&rows=100&fl=id,proj
 **Source conflict (if any):** None.
 
 **Owner follow-up needed:** No decision needed — Phase 5's exit gate (`PLAN-MISSION-5.md` §5) has evidence for every criterion as of this task; see `docs/reports/WORKLOG.md`'s exit-gate summary table for the full mapping. `D-FIN` (per `PLAN-MISSION-5.md` §6) remains the one open item, and it blocks only the *activation* of a first real financial policy, not anything this phase's mechanism-building tasks (5.A-5.E) needed to resolve.
+
+## 2026-08-14 — Owner decision: `D-HOST` (local network only) and `D-IDP` (lightweight local auth, no external IdP)
+
+**Context:** `PLAN-MISSION-6.md` §1 names `D-HOST`/`D-IDP` as the one pair of open questions in this entire plan of record that blocks a phase's *start* (task 6.A) rather than just a later sub-task or activation step — asked directly in chat once Phase 5's exit-gate work was substantially done, the same pattern used for the Phase 3→4, Phase 4→5, and Phase 5 АЛГОРИТМ-scope decisions above.
+
+**Decision (owner, asked directly in chat):**
+- **`D-HOST`:** Hosting is **local network only** — no private or public cloud. No hosting-provider abstraction is needed anywhere in `apps/*`'s deployment story.
+- **`D-IDP`:** Pilot identity/auth is **lightweight local auth**, built on the already-existing `users`/`roles`/`role_permissions` tables (`packages/platform/rbac`, in place since Phase 0) — a real login mechanism, not `apps/api_tender/deps.py`'s current dev-only `X-Dev-User` header, but explicitly **not** Entra/OIDC and **not** a break-glass procedure, since a local-network-only pilot is never internet-facing. `PLAN-MISSION-6.md`'s own task 6.A row literally named "Entra/OIDC... включая break-glass" as the anticipated shape of this decision — the owner's actual answer is narrower than that anticipation, recorded here rather than the plan's guess being silently treated as the real decision.
+
+**Implication, not yet decided:** *How* the lightweight local auth mechanism is actually built (password hashing scheme, session vs. token, whether `apps/api_vendor` needs its own login or shares `apps/api_tender`'s) is task 6.A's own implementation question, not resolved by this entry — same posture as every other "the owner answered the scope question, the mechanism is the task's job" decision in this log (e.g. the 2026-08-12 АЛГОРИТМ-scope entry).
+
+**Source conflict (if any):** None — this is the owner directly answering a question `PLAN-MISSION-6.md` itself posed, not a deviation from anything already locked.
+
+**Owner follow-up needed:** No further input needed to start planning Phase 6 task 6.A once Phase 5's exit gate receives its own GO (`AGENTS.md` §4 — phases still don't overlap; resolving `D-HOST`/`D-IDP` unblocks 6.A's *content*, not the phase-sequencing rule). `D-PILOT` (blocks task 6.D specifically) and `D-SLO` (blocks task 6.C's actual numbers, not its dashboard/alert mechanism) remain open, unaffected by this entry.
