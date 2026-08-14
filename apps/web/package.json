@@ -1,0 +1,30 @@
+{
+  "name": "uniwatch-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.8",
+    "@testing-library/react": "^16.0.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^18.3.4",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "axe-core": "^4.13.0",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.5.4",
+    "vite": "^6.0.7",
+    "vitest": "^3.0.5",
+    "vitest-axe": "^0.1.0"
+  }
+}
