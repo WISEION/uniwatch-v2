@@ -1326,3 +1326,32 @@ $ python -m ruff format --check . && python -m ruff check . && python -m mypy pa
 **Дальше:** Task 5.C закрыта в границах плана. Следующий шаг по `PLAN-MISSION-5.md` §3 — задача 5.D (canvas/outline frontend, зависит от 5.B's контракта; первый HTTP/UI-код во всём Phase 5) или 5.E (security/qa, зависит от 5.C/5.D). Записанные в этой задаче допущения (test-case-replay reading вместо formula executor, `"input"`/`"expected_output"` конвенция, unclassified review-queue design, currency-never-mixed правило, `FR-ALG-06` gap) зафиксированы в `docs/decisions/OPEN-QUESTIONS.md`. Открыта ветка `phase5-task5c-algoritm-simulation-backtest`, PR ожидает отдельного approver'а (hard ban #6).
 
 **Блокеры:** нет новых. `FR-ALG-06` остаётся заблокирован на несуществующей weight/threshold схеме, не на этой задаче.
+
+## 2026-08-14 — Задание: Phase 5, задача 5.D (АЛГОРИТМ: frontend), реализация
+
+**Контекст:** Четвёртая задача Phase 5 (`docs/reports/PLAN-MISSION-5.md` §3 task 5.D) — владелец явно выбрал 5.D следующей задачей после 5.C. Первый HTTP API поверх `packages/algorithm` и первый реальный код в `apps/web` во всём репозитории (до этого — только README). План: `docs/superpowers/plans/2026-08-14-phase5-task5d-algoritm-frontend.md` — сознательно сузил объём до аутлайн/табличной альтернативы (`FR-ALG-07`), явно отложив canvas-редактор (drag-and-drop/zoom/minimap/live impact counters/search), version diff и человекочитаемый PDF/Markdown export как честные пробелы, а не молча урезанную версию "настоящего".
+
+**Сделано (по задачам плана, в порядке):**
+- Task 1: `apps/api_tender/routers/algoritm.py` — первый HTTP-слой поверх `packages/algorithm`: graphs/versions/nodes/edges, `validate` (edit-time проверка, `FR-ALG-01`), `submit-for-approval`, `activate`, `kill-switch`, generic `transition`, `fork`, история переходов, simulate + read-back + case-traces, сравнение версий, research-dossier create/read/link. Каждый route — тонкая обёртка над уже реальными функциями `packages/algorithm`; доменные `ValueError`ы (`GraphInvalidError`/`MakerCheckerViolation`/`ImmutableVersionError`/`InvalidTransitionError`) превращаются в чистый 4xx `ApiError`, никогда в необработанный 500. Новые permission-строки (`algorithm.policy.*`/`algorithm.simulation.*`) — свободный текст, как и везде в этой кодовой базе (нет центрального enum). Добавлена одна новая read-функция в `packages/algorithm/policy_store.py` — `get_version()` (нужна API-слою для резолва версии без знания её `policy_graph_id` заранее). 7 integration-тестов через реальный HTTP (`httpx.ASGITransport`): полный lifecycle до `active` с maker/checker, отклонение невалидного графа при submit-for-approval, financial-impact активация требует двух разных identity, simulate + чтение case traces, сравнение версий, 403 без прав, 401 без аутентификации.
+- Task 2: `apps/web` — реальный, рабочий Vite + React + TypeScript + Vitest + Testing Library каркас (первый код в этом каталоге). При установке зависимостей обнаружены и устранены известные уязвимости esbuild/vite (moderate-critical, dev-server-only CORS issue) переходом на vite 6/vitest 3 вместо изначально выбранных vite 5/vitest 2 — `npm audit` подтвердил 0 уязвимостей после апгрейда, до первого коммита.
+- Task 3: Outline/table UI — `src/api/algoritmClient.ts` (тонкая `fetch`-обёртка, по функции на route), `src/PolicyOutline.tsx` (таблица nodes/edges, формы add-node/add-edge, инлайн-отображение validation issues рядом с нужным узлом), `src/SimulationPanel.tsx` (запуск симуляции, per-case execution trace — буквальный «почему принято» view из master plan §12.5, реализован как раскрывающаяся строка с `path`/`final_state`, а не canvas-оверлей), `src/TransitionHistory.tsx` (read-only лог переходов), `src/exportJson.ts` (клиентский JSON-экспорт через `Blob`). Все интерактивные элементы — нативные `<table>`/`<form>`/`<button>`/`<label>`, без кастомных drag-целей — что даёт полную keyboard-доступность без дополнительной ARIA-хореографии. 8 component-тестов (Testing Library), включая явный тест на отсутствие keyboard trap (`Tab` через обе формы до конца).
+
+**Осознанно НЕ построено (записано как честные пробелы, не изобретено):**
+1. Canvas-редактор (drag-and-drop/zoom/minimap/live impact counters/search) — требует выбора и интеграции отдельной graph-библиотеки, самостоятельное решение вне объёма этой задачи.
+2. Version diff view и человекочитаемый PDF/Markdown export — только машиночитаемый JSON export построен.
+3. Live impact counters — нужен поток live-оценок в production, которого в этой кодовой базе нет до Phase 6+.
+4. `GET /research-dossiers/{id}` возвращает сырой dict (`response_model=dict[str, Any]`), не типизированную Pydantic-модель — дублирование 17-полевой формы `ResearchDossier` не оправдано объёмом этой задачи.
+
+**Вывод полного прогона:**
+```
+$ python -m pytest tests/ -q -m "not live_network"
+722 passed, 33 skipped, 3 deselected in 927.45s (0:15:27)
+$ python -m ruff format --check . && python -m ruff check . && python -m mypy packages apps && python tools/check_v1_untouched.py
+324 files already formatted / All checks passed! / Success: no issues found in 112 source files / PASS: v1 untouched
+$ cd apps/web && npm test && npm run build
+8 passed (Vitest) / tsc --noEmit + vite build: clean, 0 type errors
+```
+
+**Дальше:** Task 5.D закрыта в границах плана. Следующий шаг по `PLAN-MISSION-5.md` §3 — задача 5.E (security/qa, последняя, закрывает ворота Phase 5). Записанные в этой задаче допущения (outline-only scope, новые permission-строки, tech-стек фронтенда, `get_version()` addition) зафиксированы в `docs/decisions/OPEN-QUESTIONS.md`. Открыта ветка `phase5-task5d-algoritm-frontend`, PR ожидает отдельного approver'а (hard ban #6).
+
+**Блокеры:** нет новых. Canvas/diff/PDF-export/live-impact-counter пробелы не блокируют 5.E — критерий accessibility 5.E проверяется против того, что реально построено (outline view), не против ненаписанного canvas.
