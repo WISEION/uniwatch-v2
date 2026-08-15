@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from packages.platform.audit import UserNotFound, disable_user, write_audit_log
+from packages.platform.auth.password_hashing import hash_password
 from packages.platform.concurrency import check_precondition
 from packages.platform.errors import ApiError
 from packages.platform.idempotency import IdempotencyKeyReused, IdempotencyStore, fingerprint
@@ -39,6 +40,10 @@ class UpdateUserRequest(BaseModel):
 
 class DisableUserRequest(BaseModel):
     reason: str
+
+
+class SetPasswordRequest(BaseModel):
+    password: str
 
 
 class UserResponse(BaseModel):
@@ -242,3 +247,37 @@ async def disable_user_route(
     except UserNotFound as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
     return UserResponse(**await _load_user_row(conn, user_id))
+
+
+@router.post("/{user_id}/set-password", status_code=204, response_model=None)
+async def set_password_route(
+    user_id: int,
+    body: SetPasswordRequest,
+    conn: AsyncConnection = Depends(get_connection),
+    identity: Identity = Depends(require_permission("admin.users.set_password", get_current_identity)),
+) -> None:
+    # A password is set as a distinct, explicit step -- never as part of
+    # user creation -- same "capability separate from creation" shape as
+    # disable-not-delete. Also clears any existing lockout: an admin
+    # resetting a locked-out user's password is the recovery path.
+    await _load_user_row(conn, user_id)  # 404s if the user doesn't exist
+    await conn.execute(
+        text(
+            """
+            UPDATE users
+            SET password_hash = :password_hash, failed_login_count = 0, locked_until = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = :id
+            """
+        ),
+        {"password_hash": hash_password(body.password), "id": user_id},
+    )
+    await write_audit_log(
+        conn,
+        actor=identity.subject,
+        action="user.set_password",
+        object_type="user",
+        object_id=str(user_id),
+        object_version=None,
+        reason=None,
+    )

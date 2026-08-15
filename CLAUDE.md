@@ -53,6 +53,11 @@ uvicorn apps.api_vendor.main:app --reload --port 8002
 # Run the worker (dev)
 python -m apps.worker.main
 
+# apps/web (dev) -- Vite + React + TypeScript
+cd apps/web && npm install && npm run dev    # dev server
+cd apps/web && npm test                      # Vitest + Testing Library
+cd apps/web && npm run build                 # tsc --noEmit + vite build
+
 # Lint / format / type-check (run all four before considering a change done)
 python -m ruff format --check .
 python -m ruff check .
@@ -93,8 +98,10 @@ apps/worker           separate process for anything long-running: ingestion, BOQ
                       reconciliation, outbox consumers — never inside an apps/api_tender or
                       apps/api_vendor request handler; not split by ADR-0006 (tender-scoped in
                       practice today, vendor has no real jobs yet)
-apps/web              React/TypeScript UI (`NFR-ARC-01`) — Phase 2+ scope, not implemented yet
-                      (see apps/web/README.md). Never the source of authorization truth: every
+apps/web              React/TypeScript UI (`NFR-ARC-01`) — Vite + TS + Vitest scaffold (Phase 5
+                      task 5.D); outline/table policy-graph builder is real and tested (canvas
+                      editor, version diff, PDF/Markdown export remain unbuilt, see
+                      apps/web/README.md). Never the source of authorization truth: every
                       permission check it shows is re-verified server-side (`FR-ADM-02`)
 ```
 
@@ -136,7 +143,9 @@ Layer 3 never writes itself as layer 4. Records also carry `data_origin` (`real`
 
 **BOQ↔SCG matching** (`packages/decision/`, task 3.D, `TENDER_INTELLIGENCE_SPEC.md` §6.4, `INV-19`): `matching.py` is executability-first, then price — the sanctioned home for logic needing both `packages/tender`'s `BoqLine` (in-process; tender/decision are not split by ADR-0006) and vendor offer data, which it may only reach through `packages/contracts/vendor_api.py`, never a direct `packages/vendor` import. Material matching is a directional, case-insensitive substring heuristic (offer material found inside the BOQ line description) — no source document supplies a real entity-matching algorithm yet. Volume sufficiency compares offer `inventory` (on-hand stock, not `capacity`'s production rate) against BOQ `qty` only when both units canonicalize identically; an unmapped/mismatched unit or an offer with a non-null `adverse_case` is excluded from "sufficient" via its own status, never silently folded into a match or non-match verdict (hard ban #3). `boq_summary.py` rolls per-line matches into a BOQ-wide green/yellow/red-by-money summary, keeping `unpriced_line_count` and `non_matchable_line_count` (non-`"normal"` `line_type`s) out of the percentage denominators so `TENDER_INTELLIGENCE_SPEC.md` §7.1's ~85% coverage threshold isn't skewed by lines that were never matchable to begin with.
 
-**Testing**: `tests/{unit,integration,contract,state,security,e2e,performance}` mirrors the CI gate split (`tests/README.md`) — `unit/` is pure logic (Fast gate); everything else needs real dependencies (Full gate). `tests/integration/conftest.py` spins up a session-scoped `testcontainers` Postgres container, gives each test a freshly dropped/recreated `public` schema, and applies all migrations before yielding an engine — Docker must be running locally to execute anything under `tests/integration/`.
+**Policy graph / АЛГОРИТМ** (`packages/algorithm/`, Phase 5, `TENDER_INTELLIGENCE_SPEC.md` §12): `policy_model.py`/`policy_lifecycle.py` define the graph (typed `human`/`rule`/`gate`/`data_quality` nodes; `ml`/`hybrid` are schema-valid but rejected at construction — no compiler exists yet to gate their activation) and its lifecycle (`draft → simulation → business_review → risk_review → approved → active → retired`, with `rejected`/`suspended` branches); `policy_store.py` enforces content-immutability structurally — no update/delete on `policy_nodes`/`policy_edges`, `fork_new_draft_version` is the only way to change an approved/active version's content. `policy_validator.py` is the pure (no-DB) compiler: dangling-reference/unreachable-node/cycle/branch-coverage/type-compatibility checks, run by `policy_store.py::submit_for_approval` — the one enforcement point before `risk_review → approved` — which also requires an approved research dossier on every `financial_impact` node. `activate_version`/`kill_switch` implement maker/checker (activator ≠ version creator, for financial-impact versions, `ADR-0005`) with a partial-unique-index-backed "one active version per graph" guarantee. `simulation_engine.py` is a test-case **replay** engine, not a formula executor — the graph's `test_cases` JSON stays intentionally opaque (no weight/threshold schema exists to execute against, `D-FIN`/`TBD-04`); `packages/decision/simulation_case_builder.py` converts real `BidReadinessCandidate`/`TenderOutcome` facts into the generic cases it consumes. `apps/api_tender/routers/algoritm.py` is the first HTTP surface over all of this; `apps/web`'s outline/table UI (above) is its only consumer today.
+
+**Testing**: `tests/{unit,integration,contract,state,security,e2e,performance}` mirrors the CI gate split (`tests/README.md`) — `unit/` is pure logic (Fast gate); everything else needs real dependencies (Full gate). `tests/conftest.py` spins up a session-scoped `testcontainers` Postgres container, gives each test a freshly dropped/recreated `public` schema, and applies all migrations before yielding an engine — Docker must be running locally to execute anything under `tests/integration/`.
 
 ## Working within phases
 

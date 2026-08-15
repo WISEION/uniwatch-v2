@@ -1,33 +1,35 @@
 from __future__ import annotations
 
 import httpx
-from fastapi import Header, Request
+from fastapi import Request
 
 from packages.platform.app_factory import get_connection
+from packages.platform.auth.session_store import resolve_session
 from packages.platform.errors import ApiError
 from packages.platform.ocr_engine import OcrEngine
 from packages.platform.rbac.models import Identity
-from packages.platform.rbac.store import resolve_identity
 
-__all__ = ["get_connection", "get_current_identity", "get_ocr_engine", "get_vendor_http_client"]
+__all__ = ["SESSION_COOKIE_NAME", "get_connection", "get_current_identity", "get_ocr_engine", "get_vendor_http_client"]
+
+SESSION_COOKIE_NAME = "uniwatch_session"
 
 
-async def get_current_identity(
-    request: Request,
-    x_dev_user: str | None = Header(default=None),
-) -> Identity:
-    """Dev-only identity resolution (D-IDP — real IdP integration — is
-    still an open decision). Deny-by-default: no header, an unknown
-    username, or a disabled user are all unauthenticated, never a default
-    identity with any access."""
-    if x_dev_user is None:
-        raise ApiError(status_code=401, code="unauthenticated", message="X-Dev-User header required")
+async def get_current_identity(request: Request) -> Identity:
+    """Local-auth session resolution (Phase 6, task 6.A, D-IDP: lightweight
+    local auth over users/roles/role_permissions, resolved 2026-08-14).
+    Replaces the former dev-only `X-Dev-User` header entirely -- no
+    dual-mode fallback. Deny-by-default: no cookie, an unknown/expired/
+    revoked session, or a disabled user are all unauthenticated, never a
+    default identity with any access."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token is None:
+        raise ApiError(status_code=401, code="unauthenticated", message="session cookie required")
 
     engine = request.app.state.engine
     async with engine.connect() as conn:
-        identity = await resolve_identity(conn, x_dev_user)
+        identity = await resolve_session(conn, token)
     if identity is None:
-        raise ApiError(status_code=401, code="unauthenticated", message="unknown or disabled user")
+        raise ApiError(status_code=401, code="unauthenticated", message="invalid or expired session")
     return identity
 
 

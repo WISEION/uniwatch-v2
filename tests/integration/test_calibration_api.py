@@ -22,6 +22,7 @@ from packages.decision.calibration_store import load_tender_outcome
 from packages.decision.decision_model import Decision
 from packages.decision.decision_store import store_decision
 from packages.decision.execution_ledger_store import store_overhead_buffer_contribution
+from packages.platform.auth.password_hashing import hash_password
 from packages.platform.settings import Settings
 from packages.tender.boq_line_model import BoqLine
 from packages.tender.boq_lines_store import store_boq_lines
@@ -43,6 +44,10 @@ CALIBRATION_PERMISSIONS = (
 
 NOW = datetime(2026, 8, 11, tzinfo=UTC).isoformat()
 
+# Phase 6 task 6.A (D-IDP): a fixed, arbitrary test password shared by every
+# user this file seeds.
+TEST_PASSWORD = "test-password-123"
+
 
 def _payload(**overrides) -> dict:
     base = {
@@ -57,8 +62,14 @@ def _payload(**overrides) -> dict:
     return {**base, **overrides}
 
 
-def _auth(username: str) -> dict:
-    return {"X-Dev-User": username}
+async def _auth(client: httpx.AsyncClient, username: str) -> dict:
+    """Logs the given user in for real (Phase 6 task 6.A, D-IDP replaced the
+    dev-only X-Dev-User header with a session-cookie login) and returns an
+    empty headers dict so every call site below stays a minimal
+    `await _auth(client, actor)` edit rather than a restructure."""
+    response = await client.post("/auth/login", json={"username": username, "password": TEST_PASSWORD})
+    assert response.status_code == 200, response.text
+    return {}
 
 
 @pytest_asyncio.fixture
@@ -105,7 +116,8 @@ async def pm_user(engine):
                 {"r": role_id, "p": perm_id},
             )
         await conn.execute(
-            text("INSERT INTO users (username, display_name, role_id) VALUES ('pm-1', 'PM One', :r)"), {"r": role_id}
+            text("INSERT INTO users (username, display_name, role_id, password_hash) VALUES ('pm-1', 'PM One', :r, :ph)"),
+            {"r": role_id, "ph": hash_password(TEST_PASSWORD)},
         )
     return "pm-1"
 
@@ -115,7 +127,8 @@ async def user_without_permissions(engine):
     async with engine.begin() as conn:
         role_id = (await conn.execute(text("INSERT INTO roles (name) VALUES ('no-calibration-perms') RETURNING id"))).scalar()
         await conn.execute(
-            text("INSERT INTO users (username, display_name, role_id) VALUES ('no-perms-1', 'No Perms', :r)"), {"r": role_id}
+            text("INSERT INTO users (username, display_name, role_id, password_hash) VALUES ('no-perms-1', 'No Perms', :r, :ph)"),
+            {"r": role_id, "ph": hash_password(TEST_PASSWORD)},
         )
     return "no-perms-1"
 
@@ -350,12 +363,14 @@ async def test_post_outcome_without_auth_is_401(client, decided_tender_id):
 
 
 async def test_post_outcome_authenticated_without_permission_is_403(client, user_without_permissions, decided_tender_id):
-    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(user_without_permissions))
+    r = await client.post(
+        f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, user_without_permissions)
+    )
     assert r.status_code == 403
 
 
 async def test_post_outcome_persists_and_audits(client, pm_user, decided_tender_id, engine):
-    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     assert r.status_code == 200
 
     async with engine.begin() as conn:
@@ -371,15 +386,15 @@ async def test_post_outcome_persists_and_audits(client, pm_user, decided_tender_
 
 
 async def test_outcome_on_a_tender_with_no_bid_decision_is_409(client, pm_user, undecided_tender_id):
-    r = await client.post(f"/tenders/{undecided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    r = await client.post(f"/tenders/{undecided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "tender_not_decided_bid"
 
 
 async def test_second_outcome_is_409_not_a_500_from_the_unique_index(client, pm_user, decided_tender_id):
-    first = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    first = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     assert first.status_code == 200
-    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "outcome_already_recorded"
 
@@ -387,12 +402,16 @@ async def test_second_outcome_is_409_not_a_500_from_the_unique_index(client, pm_
 async def test_unknown_outcome_value_is_422_not_500(client, pm_user, decided_tender_id):
     """4.C's sixth deferred item was exactly this defect on another route --
     validation left to the migration CHECK, surfacing as 500. Not repeated."""
-    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(outcome="probably_lost"), headers=_auth(pm_user))
+    r = await client.post(
+        f"/tenders/{decided_tender_id}/outcome", json=_payload(outcome="probably_lost"), headers=await _auth(client, pm_user)
+    )
     assert r.status_code == 422
 
 
 async def test_blank_source_ref_is_422_because_INV_15_requires_provenance(client, pm_user, decided_tender_id):
-    r = await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(source_ref="  "), headers=_auth(pm_user))
+    r = await client.post(
+        f"/tenders/{decided_tender_id}/outcome", json=_payload(source_ref="  "), headers=await _auth(client, pm_user)
+    )
     assert r.status_code == 422
 
 
@@ -400,34 +419,38 @@ async def test_a_won_outcome_needs_no_winner_fields(client, pm_user, decided_ten
     r = await client.post(
         f"/tenders/{decided_tender_id}/outcome",
         json=_payload(outcome="won", winner_name=None, winner_amount=None),
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 200
     assert r.json()["outcome"] == "won"
 
 
 async def test_loss_reason_without_auth_is_401(client, pm_user, decided_tender_id):
-    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
+    # Log out so this check exercises a genuinely unauthenticated request --
+    # httpx.AsyncClient's cookie jar would otherwise still carry pm_user's
+    # session from the setup call above.
+    await client.post("/auth/logout")
     r = await client.post(f"/tenders/{decided_tender_id}/outcome/loss-reasons", json={"loss_reason": "dumping", "note": "n"})
     assert r.status_code == 401
 
 
 async def test_loss_reason_authenticated_without_permission_is_403(client, pm_user, user_without_permissions, decided_tender_id):
-    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     r = await client.post(
         f"/tenders/{decided_tender_id}/outcome/loss-reasons",
         json={"loss_reason": "dumping", "note": "n"},
-        headers=_auth(user_without_permissions),
+        headers=await _auth(client, user_without_permissions),
     )
     assert r.status_code == 403
 
 
 async def test_loss_reason_on_a_won_outcome_is_409(client, pm_user, decided_tender_id):
-    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(outcome="won"), headers=_auth(pm_user))
+    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(outcome="won"), headers=await _auth(client, pm_user))
     r = await client.post(
         f"/tenders/{decided_tender_id}/outcome/loss-reasons",
         json={"loss_reason": "dumping", "note": "n"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "outcome_not_a_loss"
@@ -437,28 +460,28 @@ async def test_loss_reason_with_no_recorded_outcome_is_404(client, pm_user, deci
     r = await client.post(
         f"/tenders/{decided_tender_id}/outcome/loss-reasons",
         json={"loss_reason": "dumping", "note": "n"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "outcome_not_found"
 
 
 async def test_other_loss_reason_without_a_note_is_422(client, pm_user, decided_tender_id):
-    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     r = await client.post(
         f"/tenders/{decided_tender_id}/outcome/loss-reasons",
         json={"loss_reason": "other", "note": "   "},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 422
 
 
 async def test_loss_reason_persists_and_audits(client, pm_user, decided_tender_id, engine):
-    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     r = await client.post(
         f"/tenders/{decided_tender_id}/outcome/loss-reasons",
         json={"loss_reason": "dumping", "note": "30% under our cost"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 200
     body = r.json()
@@ -479,14 +502,14 @@ async def test_get_outcome_without_auth_is_401(client, decided_tender_id):
 
 
 async def test_get_outcome_returns_404_when_none_recorded(client, pm_user, decided_tender_id):
-    r = await client.get(f"/tenders/{decided_tender_id}/outcome", headers=_auth(pm_user))
+    r = await client.get(f"/tenders/{decided_tender_id}/outcome", headers=await _auth(client, pm_user))
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "outcome_not_found"
 
 
 async def test_get_outcome_returns_the_recorded_outcome(client, pm_user, decided_tender_id):
-    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=_auth(pm_user))
-    r = await client.get(f"/tenders/{decided_tender_id}/outcome", headers=_auth(pm_user))
+    await client.post(f"/tenders/{decided_tender_id}/outcome", json=_payload(), headers=await _auth(client, pm_user))
+    r = await client.get(f"/tenders/{decided_tender_id}/outcome", headers=await _auth(client, pm_user))
     assert r.status_code == 200
     body = r.json()
     assert body["outcome"] == "lost"
@@ -503,13 +526,13 @@ async def test_get_overhead_buffer_returns_the_stored_counts(client, pm_user, de
         await store_overhead_buffer_contribution(
             conn, tender_id=decided_tender_id, deviation_category="downtime", fact_count=2, contributed_at=NOW
         )
-    r = await client.get(f"/tenders/{decided_tender_id}/overhead-buffer", headers=_auth(pm_user))
+    r = await client.get(f"/tenders/{decided_tender_id}/overhead-buffer", headers=await _auth(client, pm_user))
     assert r.status_code == 200
     assert r.json()["items"][0]["fact_count"] == 2
 
 
 async def test_get_overhead_buffer_is_empty_list_not_error_when_none_recorded(client, pm_user, decided_tender_id):
-    r = await client.get(f"/tenders/{decided_tender_id}/overhead-buffer", headers=_auth(pm_user))
+    r = await client.get(f"/tenders/{decided_tender_id}/overhead-buffer", headers=await _auth(client, pm_user))
     assert r.status_code == 200
     assert r.json()["items"] == []
 
@@ -525,13 +548,15 @@ async def test_post_forecast_snapshot_authenticated_without_permission_is_403(
     r = await client.post(
         "/forecast-snapshots",
         json={"object_region": object_region_with_composite_signals},
-        headers=_auth(user_without_permissions),
+        headers=await _auth(client, user_without_permissions),
     )
     assert r.status_code == 403
 
 
 async def test_post_forecast_snapshot_below_threshold_is_409(client, pm_user):
-    r = await client.post("/forecast-snapshots", json={"object_region": "REGION-WITH-NO-SIGNALS"}, headers=_auth(pm_user))
+    r = await client.post(
+        "/forecast-snapshots", json={"object_region": "REGION-WITH-NO-SIGNALS"}, headers=await _auth(client, pm_user)
+    )
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "no_forecast_card"
 
@@ -540,7 +565,7 @@ async def test_post_forecast_snapshot_persists_and_audits(client, pm_user, objec
     r = await client.post(
         "/forecast-snapshots",
         json={"object_region": object_region_with_composite_signals},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 200
     body = r.json()
@@ -559,24 +584,32 @@ async def test_post_forecast_snapshot_persists_and_audits(client, pm_user, objec
 
 async def test_get_forecast_snapshot_without_auth_is_401(client, pm_user, object_region_with_composite_signals):
     r = await client.post(
-        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=await _auth(client, pm_user)
     )
     snapshot_id = r.json()["id"]
+    # Log out so this check exercises a genuinely unauthenticated request --
+    # httpx.AsyncClient's cookie jar would otherwise still carry pm_user's
+    # session from the setup call above.
+    await client.post("/auth/logout")
     r = await client.get(f"/forecast-snapshots/{snapshot_id}")
     assert r.status_code == 401
 
 
 async def test_get_forecast_snapshot_returns_404_for_unknown_id(client, pm_user):
-    r = await client.get("/forecast-snapshots/999999999", headers=_auth(pm_user))
+    r = await client.get("/forecast-snapshots/999999999", headers=await _auth(client, pm_user))
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "forecast_snapshot_not_found"
 
 
 async def test_forecast_tender_link_without_auth_is_401(client, pm_user, object_region_with_composite_signals, decided_tender_id):
     r = await client.post(
-        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=await _auth(client, pm_user)
     )
     snapshot_id = r.json()["id"]
+    # Log out so this check exercises a genuinely unauthenticated request --
+    # httpx.AsyncClient's cookie jar would otherwise still carry pm_user's
+    # session from the setup call above.
+    await client.post("/auth/logout")
     r = await client.post(f"/forecast-snapshots/{snapshot_id}/tender-link", json={"tender_id": decided_tender_id, "note": "n"})
     assert r.status_code == 401
 
@@ -585,13 +618,13 @@ async def test_forecast_tender_link_authenticated_without_permission_is_403(
     client, pm_user, user_without_permissions, object_region_with_composite_signals, decided_tender_id
 ):
     r = await client.post(
-        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=await _auth(client, pm_user)
     )
     snapshot_id = r.json()["id"]
     r = await client.post(
         f"/forecast-snapshots/{snapshot_id}/tender-link",
         json={"tender_id": decided_tender_id, "note": "n"},
-        headers=_auth(user_without_permissions),
+        headers=await _auth(client, user_without_permissions),
     )
     assert r.status_code == 403
 
@@ -600,7 +633,7 @@ async def test_forecast_tender_link_for_unknown_snapshot_is_404(client, pm_user,
     r = await client.post(
         "/forecast-snapshots/999999999/tender-link",
         json={"tender_id": decided_tender_id, "note": "n"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "forecast_snapshot_not_found"
@@ -610,14 +643,14 @@ async def test_forecast_tender_link_persists_audits_and_exposes_observed_lag(
     client, pm_user, object_region_with_composite_signals, decided_tender_id, engine
 ):
     snapshot_response = await client.post(
-        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=await _auth(client, pm_user)
     )
     snapshot_id = snapshot_response.json()["id"]
 
     link_response = await client.post(
         f"/forecast-snapshots/{snapshot_id}/tender-link",
         json={"tender_id": decided_tender_id, "note": "same road section, same buyer"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert link_response.status_code == 200
     link_body = link_response.json()
@@ -640,7 +673,7 @@ async def test_forecast_tender_link_persists_audits_and_exposes_observed_lag(
         )
     assert "calibration.confirm_forecast_tender_link" in audit
 
-    detail_response = await client.get(f"/forecast-snapshots/{snapshot_id}", headers=_auth(pm_user))
+    detail_response = await client.get(f"/forecast-snapshots/{snapshot_id}", headers=await _auth(client, pm_user))
     assert detail_response.status_code == 200
     detail_body = detail_response.json()
     assert len(detail_body["links"]) == 1
@@ -651,21 +684,21 @@ async def test_duplicate_forecast_tender_link_is_409_not_a_500_from_the_unique_c
     client, pm_user, object_region_with_composite_signals, decided_tender_id
 ):
     snapshot_response = await client.post(
-        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=_auth(pm_user)
+        "/forecast-snapshots", json={"object_region": object_region_with_composite_signals}, headers=await _auth(client, pm_user)
     )
     snapshot_id = snapshot_response.json()["id"]
 
     first = await client.post(
         f"/forecast-snapshots/{snapshot_id}/tender-link",
         json={"tender_id": decided_tender_id, "note": "n"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert first.status_code == 200
 
     second = await client.post(
         f"/forecast-snapshots/{snapshot_id}/tender-link",
         json={"tender_id": decided_tender_id, "note": "n again"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "tender_link_already_confirmed"
@@ -682,7 +715,7 @@ async def test_get_calibration_authenticated_without_permission_is_403(
     r = await client.get(
         f"/tenders/{decided_tender_id_with_boq}/calibration",
         params={"as_of": "2026-08-08T00:00:00Z"},
-        headers=_auth(user_without_permissions),
+        headers=await _auth(client, user_without_permissions),
     )
     assert r.status_code == 403
 
@@ -691,7 +724,7 @@ async def test_get_calibration_rejects_naive_as_of(client, pm_user, decided_tend
     r = await client.get(
         f"/tenders/{decided_tender_id_with_boq}/calibration",
         params={"as_of": "2026-08-08T00:00:00"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "naive_datetime"
@@ -701,7 +734,7 @@ async def test_get_calibration_returns_404_when_no_outcome_recorded(client, pm_u
     r = await client.get(
         f"/tenders/{decided_tender_id_with_boq}/calibration",
         params={"as_of": "2026-08-08T00:00:00Z"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "outcome_not_found"
@@ -710,17 +743,17 @@ async def test_get_calibration_returns_404_when_no_outcome_recorded(client, pm_u
 async def test_get_calibration_returns_price_comparison_with_coverage_and_loss_rollup(
     client, pm_user, decided_tender_id_with_boq, two_strong_vendors
 ):
-    await client.post(f"/tenders/{decided_tender_id_with_boq}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(f"/tenders/{decided_tender_id_with_boq}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     await client.post(
         f"/tenders/{decided_tender_id_with_boq}/outcome/loss-reasons",
         json={"loss_reason": "dumping", "note": "30% under our cost"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
 
     r = await client.get(
         f"/tenders/{decided_tender_id_with_boq}/calibration",
         params={"as_of": "2026-08-08T00:00:00Z"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     assert r.status_code == 200
     body = r.json()
@@ -747,7 +780,7 @@ async def test_get_organization_outcomes_without_auth_is_401(client):
 
 
 async def test_get_organization_outcomes_authenticated_without_permission_is_403(client, user_without_permissions):
-    r = await client.get("/organizations/1000000001/outcomes", headers=_auth(user_without_permissions))
+    r = await client.get("/organizations/1000000001/outcomes", headers=await _auth(client, user_without_permissions))
     assert r.status_code == 403
 
 
@@ -762,21 +795,21 @@ async def test_get_organization_outcomes_matches_across_tenders_and_carries_loss
         engine, identity_key="test-calibration-api-org-c", event_id=303, organization_voen="9999999999"
     )
 
-    await client.post(f"/tenders/{tender_a}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(f"/tenders/{tender_a}/outcome", json=_payload(), headers=await _auth(client, pm_user))
     await client.post(
         f"/tenders/{tender_a}/outcome/loss-reasons",
         json={"loss_reason": "dumping", "note": "30% under our cost"},
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     await client.post(
         f"/tenders/{tender_b}/outcome",
         json=_payload(outcome="won", winner_name=None, winner_amount=None),
-        headers=_auth(pm_user),
+        headers=await _auth(client, pm_user),
     )
     # A different buyer (VOEN) -- must not appear in "1000000001"'s rollup.
-    await client.post(f"/tenders/{tender_c}/outcome", json=_payload(), headers=_auth(pm_user))
+    await client.post(f"/tenders/{tender_c}/outcome", json=_payload(), headers=await _auth(client, pm_user))
 
-    r = await client.get("/organizations/1000000001/outcomes", headers=_auth(pm_user))
+    r = await client.get("/organizations/1000000001/outcomes", headers=await _auth(client, pm_user))
     assert r.status_code == 200
     body = r.json()
 

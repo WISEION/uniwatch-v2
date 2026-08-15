@@ -1,6 +1,6 @@
 # Container build conventions (non-root, read-only)
 
-**Status:** Convention recorded (0.A/0.C). No Dockerfile exists yet in this repo — this document is the rule any Dockerfile written from 0.B onward must follow; it is not itself an implementation.
+**Status:** Convention recorded (0.A/0.C); implemented (Phase 6 task 6.A) in `apps/api_tender/Dockerfile`, `apps/api_vendor/Dockerfile`, `apps/worker/Dockerfile`, `apps/web/Dockerfile`, and `docker-compose.local.yml` — this document remains the rule those files follow, not a substitute for reading them.
 **Requirements:** `NFR-SEC-08`; `docs/architecture/threat-model.md` T7.
 
 ## Why
@@ -16,6 +16,29 @@ v1's release-note failures (`RN-11`/`RN-12`, and the general v1 audit finding on
 
 ## What this does not decide yet
 
-- The exact base image tag/distribution — a 0.B (when the first Dockerfile is written) decision.
-- Orchestration-level enforcement (e.g. a Kubernetes `PodSecurityStandard`/admission policy that rejects a non-conforming image) — depends on `D-HOST` (owner decision on hosting), out of Phase 0/1 scope.
-- Image digest pinning at deploy time (`NFR-SEC-09`, T8 in the threat model) — a Phase 6 production-deployment concern, not a build-convention concern.
+- ~~The exact base image tag/distribution~~ — decided (Phase 6 task 6.A):
+  `python:3.12-slim` for `apps/api_tender`, `apps/api_vendor`, `apps/worker`
+  (matching `pyproject.toml`'s `requires-python = ">=3.12"`). `apps/web` is a
+  two-stage build: `node:20-alpine` to run `npm run build`, then
+  `nginxinc/nginx-unprivileged:1.27-alpine` to serve the static output —
+  that specific nginx image, not the stock one, because it already runs as
+  non-root by default. See each `apps/*/Dockerfile`.
+- Orchestration-level enforcement (e.g. a Kubernetes `PodSecurityStandard`/
+  admission policy) is still not applicable, but for a different reason
+  than before: `D-HOST` is now resolved (owner, 2026-08-14) to
+  local-network-only — no cloud provider, no Kubernetes, per
+  `docs/decisions/OPEN-QUESTIONS.md`. `docker-compose.local.yml` enforces
+  rule 2 directly at the one orchestration layer this topology actually
+  has (`read_only: true` on every app service, with an explicit tmpfs mount
+  only where `apps/web`'s nginx stage genuinely needs one) — that is as far
+  as "orchestration-level enforcement" goes for a single-compose-file local
+  topology, and is not a substitute for an admission-policy-style gate if a
+  future `D-HOST` change ever reintroduces an orchestrator.
+- Image digest pinning at **deploy time** (`NFR-SEC-09`, T8 in the threat
+  model) is still open — Phase 6 task 6.B's job. What Phase 6 task 6.A
+  answers is the **build-time** half: CI's `build-images` job
+  (`.github/workflows/ci.yml`) computes each image's content digest and
+  records it in `release-manifest.json`
+  (`docs/operations/release-manifest.md`) for every commit. 6.B is where a
+  production-authorization gate actually checks a digest being deployed
+  against that manifest.

@@ -1,0 +1,23 @@
+# Build-context excludes for the repo-root-context Dockerfiles
+# (apps/api_tender, apps/api_vendor, apps/worker -- apps/web builds with
+# its own context, apps/web/.dockerignore, and its own excludes below).
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.serena
+.vscode
+.claude
+.codex
+.agents
+*.egg-info
+docs
+tests
+fixtures
+apps/web/node_modules
+apps/web/dist

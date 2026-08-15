@@ -10,6 +10,7 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from apps.api_tender.main import create_app
+from packages.platform.auth.password_hashing import hash_password
 from packages.platform.settings import Settings
 
 ADMIN_PERMISSIONS = (
@@ -18,6 +19,16 @@ ADMIN_PERMISSIONS = (
     "admin.users.update",
     "admin.users.disable",
 )
+
+# Phase 6 task 6.A (D-IDP): a fixed, arbitrary test password shared by every
+# user this file seeds -- the exact string doesn't matter, only that the
+# same one is used to hash at insert time and to log in with afterward.
+TEST_PASSWORD = "test-password-123"
+
+
+async def _login(client: httpx.AsyncClient, username: str) -> None:
+    response = await client.post("/auth/login", json={"username": username, "password": TEST_PASSWORD})
+    assert response.status_code == 200, response.text
 
 
 @pytest_asyncio.fixture
@@ -51,8 +62,8 @@ async def admin_user(engine):
                 {"r": role_id, "p": perm_id},
             )
         await conn.execute(
-            text("INSERT INTO users (username, display_name, role_id) VALUES ('admin-1', 'Admin One', :r)"),
-            {"r": role_id},
+            text("INSERT INTO users (username, display_name, role_id, password_hash) VALUES ('admin-1', 'Admin One', :r, :ph)"),
+            {"r": role_id, "ph": hash_password(TEST_PASSWORD)},
         )
     return "admin-1"
 
@@ -65,6 +76,8 @@ async def viewer_role(engine):
 
 
 async def test_get_without_dev_user_header_is_401(client, admin_user):
+    # admin_user only seeds the DB row (no login) -- this client is never
+    # authenticated, so no cookie exists at all.
     response = await client.get("/admin/users")
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthenticated"
@@ -73,26 +86,28 @@ async def test_get_without_dev_user_header_is_401(client, admin_user):
 async def test_authenticated_user_without_permission_is_403(client, viewer_role, engine):
     async with engine.begin() as conn:
         await conn.execute(
-            text("INSERT INTO users (username, display_name, role_id) VALUES ('viewer-1', 'Viewer', :r)"),
-            {"r": viewer_role},
+            text("INSERT INTO users (username, display_name, role_id, password_hash) VALUES ('viewer-1', 'Viewer', :r, :ph)"),
+            {"r": viewer_role, "ph": hash_password(TEST_PASSWORD)},
         )
-    response = await client.get("/admin/users", headers={"X-Dev-User": "viewer-1"})
+    await _login(client, "viewer-1")
+    response = await client.get("/admin/users")
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "forbidden"
 
 
 async def test_create_user_requires_idempotency_key(client, admin_user, viewer_role):
+    await _login(client, admin_user)
     response = await client.post(
         "/admin/users",
         json={"username": "new-1", "display_name": "New One", "role_name": "member"},
-        headers={"X-Dev-User": admin_user},
     )
     assert response.status_code == 422  # missing required header
 
 
 async def test_create_user_replay_does_not_duplicate(client, admin_user, viewer_role, engine):
+    await _login(client, admin_user)
     payload = {"username": "new-2", "display_name": "New Two", "role_name": "member"}
-    headers = {"X-Dev-User": admin_user, "Idempotency-Key": "create-key-1"}
+    headers = {"Idempotency-Key": "create-key-1"}
 
     first = await client.post("/admin/users", json=payload, headers=headers)
     assert first.status_code == 201
@@ -106,7 +121,8 @@ async def test_create_user_replay_does_not_duplicate(client, admin_user, viewer_
 
 
 async def test_create_user_same_key_different_payload_is_conflict(client, admin_user, viewer_role):
-    headers = {"X-Dev-User": admin_user, "Idempotency-Key": "create-key-2"}
+    await _login(client, admin_user)
+    headers = {"Idempotency-Key": "create-key-2"}
     first = await client.post(
         "/admin/users",
         json={"username": "new-3", "display_name": "New Three", "role_name": "member"},
@@ -130,15 +146,15 @@ async def test_list_users_paginates_by_cursor_not_offset(client, admin_user, vie
                 {"u": f"bulk-{i}", "r": viewer_role},
             )
 
-    headers = {"X-Dev-User": admin_user}
-    first_page = await client.get("/admin/users?limit=2", headers=headers)
+    await _login(client, admin_user)
+    first_page = await client.get("/admin/users?limit=2")
     assert first_page.status_code == 200
     body = first_page.json()
     assert len(body["items"]) == 2
     assert body["next_cursor"] is not None
     assert "offset" not in first_page.url.params
 
-    second_page = await client.get(f"/admin/users?limit=2&cursor={body['next_cursor']}", headers=headers)
+    second_page = await client.get(f"/admin/users?limit=2&cursor={body['next_cursor']}")
     second_body = second_page.json()
     assert len(second_body["items"]) == 2
     first_ids = {item["id"] for item in body["items"]}
@@ -151,9 +167,10 @@ async def test_get_never_writes_db_state(client, admin_user, viewer_role, engine
         async with engine.begin() as conn:
             return (await conn.execute(text("SELECT count(*) FROM users"))).scalar()
 
+    await _login(client, admin_user)
     before = await snapshot()
     for _ in range(3):
-        response = await client.get("/admin/users", headers={"X-Dev-User": admin_user})
+        response = await client.get("/admin/users")
         assert response.status_code == 200
     after = await snapshot()
     assert before == after
@@ -167,10 +184,10 @@ async def test_update_without_if_match_is_422(client, admin_user, viewer_role, e
                 {"r": viewer_role},
             )
         ).scalar()
+    await _login(client, admin_user)
     response = await client.patch(
         f"/admin/users/{user_id}",
         json={"display_name": "Renamed"},
-        headers={"X-Dev-User": admin_user},
     )
     assert response.status_code == 422
 
@@ -183,10 +200,11 @@ async def test_update_with_stale_if_match_is_409_with_current_version(client, ad
                 {"r": viewer_role},
             )
         ).scalar()
+    await _login(client, admin_user)
     response = await client.patch(
         f"/admin/users/{user_id}",
         json={"display_name": "Renamed"},
-        headers={"X-Dev-User": admin_user, "If-Match": "99"},
+        headers={"If-Match": "99"},
     )
     assert response.status_code == 409
     assert response.json()["error"]["details"] == [{"current_version": 1}]
@@ -200,10 +218,11 @@ async def test_update_with_correct_if_match_succeeds_and_bumps_version(client, a
                 {"r": viewer_role},
             )
         ).scalar()
+    await _login(client, admin_user)
     response = await client.patch(
         f"/admin/users/{user_id}",
         json={"display_name": "Renamed"},
-        headers={"X-Dev-User": admin_user, "If-Match": "1"},
+        headers={"If-Match": "1"},
     )
     assert response.status_code == 200
     body = response.json()
@@ -219,10 +238,10 @@ async def test_disable_keeps_row_and_is_not_deletable(client, admin_user, viewer
                 {"r": viewer_role},
             )
         ).scalar()
+    await _login(client, admin_user)
     response = await client.post(
         f"/admin/users/{user_id}/disable",
         json={"reason": "left the company"},
-        headers={"X-Dev-User": admin_user},
     )
     assert response.status_code == 200
     assert response.json()["status"] == "disabled"
@@ -248,14 +267,21 @@ async def test_disabled_user_cannot_authenticate(client, admin_user, viewer_role
     async with engine.begin() as conn:
         user_id = (
             await conn.execute(
-                text("INSERT INTO users (username, display_name, role_id) VALUES ('u-dis2', 'U', :r) RETURNING id"),
-                {"r": viewer_role},
+                text(
+                    "INSERT INTO users (username, display_name, role_id, password_hash) "
+                    "VALUES ('u-dis2', 'U', :r, :ph) RETURNING id"
+                ),
+                {"r": viewer_role, "ph": hash_password(TEST_PASSWORD)},
             )
         ).scalar()
+    await _login(client, admin_user)
     await client.post(
         f"/admin/users/{user_id}/disable",
         json={"reason": "n/a"},
-        headers={"X-Dev-User": admin_user},
     )
-    response = await client.get("/admin/users", headers={"X-Dev-User": "u-dis2"})
+    # The disabled user must not even be able to log in anymore --
+    # authenticate_user requires status == 'active' -- rather than merely
+    # being rejected on some later authenticated request.
+    response = await client.post("/auth/login", json={"username": "u-dis2", "password": TEST_PASSWORD})
     assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthenticated"

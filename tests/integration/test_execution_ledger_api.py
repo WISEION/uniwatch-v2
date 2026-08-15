@@ -20,6 +20,7 @@ from apps.api_tender.main import create_app as create_tender_app
 from apps.api_vendor.main import create_app as create_vendor_app
 from packages.decision.decision_model import Decision
 from packages.decision.decision_store import store_decision, store_lock_in_requirement
+from packages.platform.auth.password_hashing import hash_password
 from packages.platform.settings import Settings
 from packages.tender.boq_line_model import BoqLine
 from packages.tender.boq_lines_store import store_boq_lines
@@ -33,6 +34,15 @@ EXECUTION_LEDGER_PERMISSIONS = (
     "decision.execution_facts.read",
     "decision.execution_facts.close_project",
 )
+
+# Phase 6 task 6.A (D-IDP): a fixed, arbitrary test password shared by every
+# user this file seeds.
+TEST_PASSWORD = "test-password-123"
+
+
+async def _login(client: httpx.AsyncClient, username: str) -> None:
+    response = await client.post("/auth/login", json={"username": username, "password": TEST_PASSWORD})
+    assert response.status_code == 200, response.text
 
 
 class FakeOcrEngine:
@@ -92,7 +102,8 @@ async def pm_user(engine):
                 {"r": role_id, "p": perm_id},
             )
         await conn.execute(
-            text("INSERT INTO users (username, display_name, role_id) VALUES ('pm-el-1', 'PM EL', :r)"), {"r": role_id}
+            text("INSERT INTO users (username, display_name, role_id, password_hash) VALUES ('pm-el-1', 'PM EL', :r, :ph)"),
+            {"r": role_id, "ph": hash_password(TEST_PASSWORD)},
         )
     return "pm-el-1"
 
@@ -281,10 +292,10 @@ async def test_napkin_submission_rejected_when_tender_has_no_active_bid_decision
             normalized_fields={"id": 900101},
         )
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_id}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"x").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "tender_not_decided_bid"
@@ -337,20 +348,20 @@ async def test_napkin_submission_rejected_when_tender_was_decided_no_bid(client,
             ),
         )
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_id}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"x").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "tender_not_decided_bid"
 
 
 async def test_voice_capture_stores_evidence_but_is_not_parsed(client, pm_user, tender_with_boq_and_lock_in):
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={"capture_kind": "voice", "mime_type": "audio/ogg", "image_base64": base64.b64encode(b"voice-bytes").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 201
     body = response.json()
@@ -363,10 +374,10 @@ async def test_photo_submission_returns_503_when_ocr_not_configured(client, pm_u
     # Hard ban #3 (no silent fallback): an unconfigured OCR backend must be
     # a real, loud error, never a silent no-op or a guessed model name.
     monkeypatch.delenv("OCR_MODEL_NAME", raising=False)
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "ocr_not_configured"
@@ -394,7 +405,8 @@ async def test_list_execution_facts_returns_stored_facts(client, pm_user, tender
             ),
         )
 
-    response = await client.get(f"/tenders/{tender_with_boq_and_lock_in}/execution-facts", headers={"X-Dev-User": pm_user})
+    await _login(client, pm_user)
+    response = await client.get(f"/tenders/{tender_with_boq_and_lock_in}/execution-facts")
     assert response.status_code == 200
     body = response.json()
     assert len(body["items"]) == 1
@@ -420,10 +432,10 @@ async def test_napkin_unrecognized_still_persists_evidence_and_exception(
     # separately-committed transaction), or INV-18 is silently violated.
     tender_app.state.ocr_engine = FakeOcrEngine("this is not valid json")
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "napkin_unrecognized"
@@ -458,11 +470,11 @@ async def test_two_unrelated_napkin_failures_on_the_same_tender_produce_two_exce
     # per-tender string -- otherwise enqueue_exception's get-or-create by
     # (source, exception_type, correlation_id, status='open') silently
     # merges a second, unrelated failure into the first still-open row.
+    await _login(client, pm_user)
     tender_app.state.ocr_engine = FakeOcrEngine("this is not valid json")
     first = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes-1").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert first.status_code == 422
 
@@ -470,7 +482,6 @@ async def test_two_unrelated_napkin_failures_on_the_same_tender_produce_two_exce
     second = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes-2").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert second.status_code == 422
 
@@ -527,6 +538,7 @@ async def test_two_vendor_culprits_in_one_submission_each_get_their_own_exceptio
     }
     tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={
@@ -535,7 +547,6 @@ async def test_two_vendor_culprits_in_one_submission_each_get_their_own_exceptio
             "image_base64": base64.b64encode(b"jpeg-bytes").decode(),
             "reputation_ttl_days": 30,
         },
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 201
     assert len(response.json()["facts"]) == 2
@@ -584,10 +595,10 @@ async def test_photo_submission_with_malformed_observed_at_is_422_and_durably_qu
     }
     tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "napkin_unrecognized"
@@ -632,10 +643,10 @@ async def test_photo_submission_with_internal_culprit_stores_fact_without_reputa
     }
     tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 201
     body = response.json()
@@ -676,11 +687,11 @@ async def test_vendor_culprit_without_ttl_queues_exception_and_still_succeeds(
     }
     tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         # reputation_ttl_days deliberately omitted -- TBD-TIS-01.
         json={"capture_kind": "photo", "mime_type": "image/jpeg", "image_base64": base64.b64encode(b"jpeg-bytes").decode()},
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 201
     body = response.json()
@@ -724,6 +735,7 @@ async def test_vendor_culprit_with_unresolved_vendor_name_queues_exception(
     }
     tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_with_boq_and_lock_in}/execution-facts/napkin",
         json={
@@ -732,7 +744,6 @@ async def test_vendor_culprit_with_unresolved_vendor_name_queues_exception(
             "image_base64": base64.b64encode(b"jpeg-bytes").decode(),
             "reputation_ttl_days": 30,
         },
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 201
     assert response.json()["facts"][0]["culprit_vendor_id"] is None
@@ -773,6 +784,7 @@ async def test_vendor_culprit_with_ttl_reports_reputation_fact_to_vendor_service
     }
     tender_app.state.ocr_engine = FakeOcrEngine(json.dumps(ocr_payload))
 
+    await _login(client, pm_user)
     response = await client.post(
         f"/tenders/{tender_id}/execution-facts/napkin",
         json={
@@ -781,7 +793,6 @@ async def test_vendor_culprit_with_ttl_reports_reputation_fact_to_vendor_service
             "image_base64": base64.b64encode(b"jpeg-bytes").decode(),
             "reputation_ttl_days": 30,
         },
-        headers={"X-Dev-User": pm_user},
     )
     assert response.status_code == 201
     assert response.json()["facts"][0]["culprit_vendor_id"] == vendor_id
@@ -834,7 +845,8 @@ async def test_execution_summary_reports_the_delta(client, pm_user, tender_with_
             ),
         )
 
-    response = await client.get(f"/tenders/{tender_with_boq_and_lock_in}/execution-summary", headers={"X-Dev-User": pm_user})
+    await _login(client, pm_user)
+    response = await client.get(f"/tenders/{tender_with_boq_and_lock_in}/execution-summary")
     assert response.status_code == 200
     body = response.json()
     assert body["plan_fact_deltas"][0]["delta"] == "5"
@@ -863,7 +875,8 @@ async def test_close_project_persists_overhead_buffer_contributions(client, pm_u
             ),
         )
 
-    response = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-Dev-User": pm_user})
+    await _login(client, pm_user)
+    response = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project")
     assert response.status_code == 200
     assert response.json()["deviation_category_counts"]["preliminaries"] == 1
 
@@ -907,7 +920,8 @@ async def test_close_project_is_not_idempotent_second_call_rejected(client, pm_u
             ),
         )
 
-    first = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-Dev-User": pm_user})
+    await _login(client, pm_user)
+    first = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project")
     assert first.status_code == 200
 
     async with engine.begin() as conn:
@@ -924,7 +938,7 @@ async def test_close_project_is_not_idempotent_second_call_rejected(client, pm_u
     count_after_first = len(rows_after_first)
     assert count_after_first > 0
 
-    second = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project", headers={"X-Dev-User": pm_user})
+    second = await client.post(f"/tenders/{tender_with_boq_and_lock_in}/close-project")
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "project_already_closed"
 
@@ -965,7 +979,8 @@ async def test_close_project_rejected_when_tender_has_no_active_bid_decision(cli
             normalized_fields={"id": 900103},
         )
 
-    response = await client.post(f"/tenders/{tender_id}/close-project", headers={"X-Dev-User": pm_user})
+    await _login(client, pm_user)
+    response = await client.post(f"/tenders/{tender_id}/close-project")
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "tender_not_decided_bid"
 
@@ -1061,7 +1076,8 @@ async def test_organization_execution_history_route_returns_matching_facts_and_r
     unauth_response = await client.get("/organizations/1234567890/execution-history")
     assert unauth_response.status_code == 401
 
-    response = await client.get("/organizations/1234567890/execution-history", headers={"X-Dev-User": pm_user})
+    await _login(client, pm_user)
+    response = await client.get("/organizations/1234567890/execution-history")
     assert response.status_code == 200
     body = response.json()
     assert len(body["items"]) == 1

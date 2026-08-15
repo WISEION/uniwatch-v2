@@ -9,6 +9,17 @@ dependencies = [
   "pydantic==2.10.4",
   "sqlalchemy[asyncio]==2.0.36",
   "asyncpg==0.30.0",
+  "argon2-cffi==23.1.0",
+  # Real runtime dependency, not test-only: apps/api_tender/deps.py and
+  # packages/contracts/vendor_api.py (ADR-0006's tender<->vendor network
+  # client) both `import httpx` at module scope. Found while validating
+  # apps/api_tender's Dockerfile (Phase 6 task 6.A) -- a `pip install .`
+  # without the `dev` extra crashed apps/api_tender/main.py and
+  # apps/worker/main.py at import time with `ModuleNotFoundError: No
+  # module named 'httpx'`, since it was previously listed only under the
+  # `dev` extra below. It stays listed there too, for tests that use it as
+  # an ASGI test client.
+  "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]
