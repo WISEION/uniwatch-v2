@@ -31,7 +31,7 @@ async def test_readiness_ok_when_schema_matches(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["schema_version"] == 21
+    assert body["schema_version"] == 22
 
 
 async def test_internal_ping_is_unauthenticated_and_static(client):
