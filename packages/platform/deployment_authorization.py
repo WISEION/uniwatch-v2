@@ -99,7 +99,8 @@ async def get_authorization(conn: AsyncConnection, authorization_id: int) -> dic
     if row is None:
         return None
     result = dict(row)
-    result["image_digests"] = json.loads(result["image_digests"])
+    if isinstance(result["image_digests"], str):
+        result["image_digests"] = json.loads(result["image_digests"])
     return result
 
 
@@ -113,7 +114,7 @@ async def latest_authorization_for_commit(conn: AsyncConnection, commit_sha: str
                            db_schema_version_at_authorization, authorized_at, notes
                     FROM deployment_authorizations
                     WHERE commit_sha = :commit_sha
-                    ORDER BY authorized_at DESC
+                    ORDER BY authorized_at DESC, id DESC
                     LIMIT 1
                     """
                 ),
@@ -126,5 +127,6 @@ async def latest_authorization_for_commit(conn: AsyncConnection, commit_sha: str
     if row is None:
         return None
     result = dict(row)
-    result["image_digests"] = json.loads(result["image_digests"])
+    if isinstance(result["image_digests"], str):
+        result["image_digests"] = json.loads(result["image_digests"])
     return result
