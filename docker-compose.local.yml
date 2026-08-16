@@ -1,0 +1,143 @@
+# Local-network-only hosting topology (D-HOST, resolved by the owner
+# 2026-08-14 -- docs/decisions/OPEN-QUESTIONS.md: no cloud provider). This
+# compose file *is* the complete topology: run
+# `docker compose -f docker-compose.local.yml up` on whatever single
+# machine is meant to host it. There is no external host/IP/domain baked
+# in here -- only the compose network's own internal service-name DNS
+# (postgres/api_tender/api_vendor), which resolves only between these
+# containers.
+#
+# Every app image follows docs/operations/container-conventions.md
+# (non-root, minimal base image, no baked secrets -- DATABASE_URL etc. are
+# supplied below via `environment:`, never COPY'd into a layer). `read_only:
+# true` on every app service enforces that document's rule 2 directly at
+# the one orchestration layer this topology actually has; apps/web's nginx
+# stage is the only one that genuinely needs a writable path at runtime, so
+# it gets narrow tmpfs mounts instead of a writable root filesystem.
+
+name: uniwatch
+
+services:
+  postgres:
+    # Matches tests/conftest.py's testcontainers fixture, so local compose
+    # and the test suite run against the same Postgres major version/image.
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: uniwatch
+      POSTGRES_PASSWORD: uniwatch
+      POSTGRES_DB: uniwatch
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uniwatch -d uniwatch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - uniwatch
+
+  # One-shot: applies migrations/*.sql via scripts/migrate.py, then exits.
+  # migrations/README.md rule 1 / packages/platform/migrations_runner.py's
+  # own docstring: the schema never changes as a side effect of
+  # api_tender/api_vendor/worker starting up, so something else has to call
+  # apply_all() explicitly before those services come up -- this is that
+  # something, reusing the worker image (which already carries scripts/)
+  # with a command override.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    command: ["python", "scripts/migrate.py"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://uniwatch:uniwatch@postgres:5432/uniwatch
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    networks:
+      - uniwatch
+
+  api_tender:
+    build:
+      context: .
+      dockerfile: apps/api_tender/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://uniwatch:uniwatch@postgres:5432/uniwatch
+      # Cross-service call target (ADR-0006): the compose network's own
+      # service-name DNS for api_vendor, not a real deploy hostname.
+      VENDOR_SERVICE_BASE_URL: http://api_vendor:8002
+      # Empty by default (packages/platform/settings.py): deny-by-default
+      # extends to "no reverse proxy is trusted until configured" -- there
+      # is no reverse proxy in front of this compose topology today.
+      TRUSTED_PROXY_CIDRS: ""
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    networks:
+      - uniwatch
+
+  api_vendor:
+    build:
+      context: .
+      dockerfile: apps/api_vendor/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://uniwatch:uniwatch@postgres:5432/uniwatch
+      TRUSTED_PROXY_CIDRS: ""
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    networks:
+      - uniwatch
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://uniwatch:uniwatch@postgres:5432/uniwatch
+      TRUSTED_PROXY_CIDRS: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    networks:
+      - uniwatch
+
+  web:
+    build:
+      context: apps/web
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api_tender
+      - api_vendor
+    read_only: true
+    # nginx's own runtime dirs are the one genuinely-needed writable path
+    # in this whole topology (container-conventions.md rule 2: an explicit
+    # tmpfs mount, not a writable root filesystem).
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    networks:
+      - uniwatch
+
+networks:
+  uniwatch:
+    driver: bridge
+
+volumes:
+  postgres_data:

@@ -95,6 +95,77 @@ jobs:
       - name: full suite (integration + any contract/state/security/e2e present)
         run: python -m pytest tests/ -q -m "not live_network"
 
+  build-images:
+    # Pipeline *mechanics* only (Phase 6 task 6.A's hosting-topology
+    # sub-task): builds each of the four real-service Dockerfiles and
+    # records their content digests. D-HOST resolved to local-network-only
+    # (docs/decisions/OPEN-QUESTIONS.md) -- there is no registry to push to
+    # yet, so these are local `docker build`s, not a publish step. This
+    # seeds the "Image digest integrity" (NFR-SEC-09) line in
+    # .ci/README.md's Gate 3/4 stub table; the production-authorization
+    # gate that actually checks a deployed digest against this manifest is
+    # Phase 6 task 6.B, not this job.
+    name: Build service images + release manifest
+    runs-on: ubuntu-latest
+    needs: [fast, full]
+    env:
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build api_tender image
+        run: docker build -f apps/api_tender/Dockerfile -t "uniwatch/api_tender:$IMAGE_TAG" .
+      - name: Build api_vendor image
+        run: docker build -f apps/api_vendor/Dockerfile -t "uniwatch/api_vendor:$IMAGE_TAG" .
+      - name: Build worker image
+        run: docker build -f apps/worker/Dockerfile -t "uniwatch/worker:$IMAGE_TAG" .
+      - name: Build web image
+        run: docker build -f apps/web/Dockerfile -t "uniwatch/web:$IMAGE_TAG" apps/web
+
+      # docs/operations/release-manifest.md documents this shape. Digest =
+      # `docker inspect`'s .Id: a local content digest of the built image,
+      # not a registry distribution digest (there is nothing to push to).
+      - name: Write release-manifest.json
+        run: |
+          python -c "
+          import json
+          import os
+          import subprocess
+          from datetime import UTC, datetime
+
+          tag = os.environ['IMAGE_TAG']
+          images = {
+              'api_tender': f'uniwatch/api_tender:{tag}',
+              'api_vendor': f'uniwatch/api_vendor:{tag}',
+              'worker': f'uniwatch/worker:{tag}',
+              'web': f'uniwatch/web:{tag}',
+          }
+          digests = {
+              name: subprocess.check_output(
+                  ['docker', 'inspect', '--format={{.Id}}', image], text=True
+              ).strip()
+              for name, image in images.items()
+          }
+          manifest = {
+              'commit_sha': tag,
+              'images': digests,
+              'built_at': datetime.now(UTC).isoformat(),
+          }
+          with open('release-manifest.json', 'w') as f:
+              json.dump(manifest, f, indent=2)
+              f.write('\n')
+          print(json.dumps(manifest, indent=2))
+          "
+
+      - name: Upload release-manifest.json artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: release-manifest.json
+
   live-fetch:
     # Deliberately NOT a required status check (not in `needs` for anything,
     # not named in branch protection) -- etender.gov.az is confirmed

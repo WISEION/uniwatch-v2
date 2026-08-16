@@ -10,6 +10,7 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from apps.api_tender.main import create_app as create_tender_app
+from packages.platform.auth.password_hashing import hash_password
 from packages.platform.settings import Settings
 
 ALL_ALGORITHM_PERMISSIONS = (
@@ -20,6 +21,10 @@ ALL_ALGORITHM_PERMISSIONS = (
     "algorithm.simulation.read",
     "algorithm.simulation.write",
 )
+
+# Phase 6 task 6.A (D-IDP): a fixed, arbitrary test password shared by every
+# user this file seeds.
+TEST_PASSWORD = "test-password-123"
 
 
 @pytest_asyncio.fixture
@@ -55,7 +60,8 @@ async def _make_user(engine, *, username: str, permissions: tuple[str, ...]) -> 
                 {"r": role_id, "p": perm_id},
             )
         await conn.execute(
-            text("INSERT INTO users (username, display_name, role_id) VALUES (:u, :u, :r)"), {"u": username, "r": role_id}
+            text("INSERT INTO users (username, display_name, role_id, password_hash) VALUES (:u, :u, :r, :ph)"),
+            {"u": username, "r": role_id, "ph": hash_password(TEST_PASSWORD)},
         )
     return username
 
@@ -75,8 +81,18 @@ async def read_only_user(engine):
     return await _make_user(engine, username="reader-1", permissions=("algorithm.policy.read",))
 
 
-def _auth(username: str) -> dict:
-    return {"X-Dev-User": username}
+async def _auth(client: httpx.AsyncClient, username: str) -> dict:
+    """Logs the given user in for real (Phase 6 task 6.A, D-IDP replaced the
+    dev-only X-Dev-User header with a session-cookie login) and returns an
+    empty headers dict -- kept as a return value so every call site below
+    stays a minimal `await _auth(client, actor)` edit rather than a
+    restructure. httpx.AsyncClient's cookie jar then carries the session on
+    every subsequent request on this same client, including across an
+    identity switch (a later `_auth(client, other_user)` call just replaces
+    the cookie via its own Set-Cookie response)."""
+    response = await client.post("/auth/login", json={"username": username, "password": TEST_PASSWORD})
+    assert response.status_code == 200, response.text
+    return {}
 
 
 def _rule_node(node_key: str, **overrides) -> dict:
@@ -108,23 +124,27 @@ def _terminal_node(node_key: str) -> dict:
 
 
 async def _build_clean_graph(client: httpx.AsyncClient, *, actor: str) -> tuple[int, int]:
-    graph_resp = await client.post("/policy-graphs", json={"name": "Bid/No-Bid test", "owner": actor}, headers=_auth(actor))
+    graph_resp = await client.post(
+        "/policy-graphs", json={"name": "Bid/No-Bid test", "owner": actor}, headers=await _auth(client, actor)
+    )
     assert graph_resp.status_code == 200, graph_resp.text
     graph_id = graph_resp.json()["id"]
 
-    version_resp = await client.post(f"/policy-graphs/{graph_id}/versions", json={"version_number": 1}, headers=_auth(actor))
+    version_resp = await client.post(
+        f"/policy-graphs/{graph_id}/versions", json={"version_number": 1}, headers=await _auth(client, actor)
+    )
     assert version_resp.status_code == 200, version_resp.text
     version_id = version_resp.json()["id"]
 
     nodes = [_rule_node("start"), _terminal_node("low_path"), _terminal_node("high_path")]
-    nodes_resp = await client.post(f"/policy-versions/{version_id}/nodes", json=nodes, headers=_auth(actor))
+    nodes_resp = await client.post(f"/policy-versions/{version_id}/nodes", json=nodes, headers=await _auth(client, actor))
     assert nodes_resp.status_code == 200, nodes_resp.text
 
     edges = [
         {"from_node_key": "start", "to_node_key": "low_path", "condition_label": "low"},
         {"from_node_key": "start", "to_node_key": "high_path", "condition_label": "high"},
     ]
-    edges_resp = await client.post(f"/policy-versions/{version_id}/edges", json=edges, headers=_auth(actor))
+    edges_resp = await client.post(f"/policy-versions/{version_id}/edges", json=edges, headers=await _auth(client, actor))
     assert edges_resp.status_code == 200, edges_resp.text
 
     return graph_id, version_id
@@ -133,53 +153,75 @@ async def _build_clean_graph(client: httpx.AsyncClient, *, actor: str) -> tuple[
 async def test_full_lifecycle_to_active_with_maker_checker(client, designer, checker):
     _graph_id, version_id = await _build_clean_graph(client, actor=designer)
 
-    validate_resp = await client.post(f"/policy-versions/{version_id}/validate", headers=_auth(designer))
+    validate_resp = await client.post(f"/policy-versions/{version_id}/validate", headers=await _auth(client, designer))
     assert validate_resp.status_code == 200
     assert validate_resp.json()["issues"] == []
 
-    await client.post(f"/policy-versions/{version_id}/transition", json={"to_status": "simulation"}, headers=_auth(designer))
-    await client.post(f"/policy-versions/{version_id}/transition", json={"to_status": "business_review"}, headers=_auth(designer))
-    await client.post(f"/policy-versions/{version_id}/transition", json={"to_status": "risk_review"}, headers=_auth(designer))
+    await client.post(
+        f"/policy-versions/{version_id}/transition", json={"to_status": "simulation"}, headers=await _auth(client, designer)
+    )
+    await client.post(
+        f"/policy-versions/{version_id}/transition", json={"to_status": "business_review"}, headers=await _auth(client, designer)
+    )
+    await client.post(
+        f"/policy-versions/{version_id}/transition", json={"to_status": "risk_review"}, headers=await _auth(client, designer)
+    )
 
-    approve_resp = await client.post(f"/policy-versions/{version_id}/submit-for-approval", json={}, headers=_auth(designer))
+    approve_resp = await client.post(
+        f"/policy-versions/{version_id}/submit-for-approval", json={}, headers=await _auth(client, designer)
+    )
     assert approve_resp.status_code == 200, approve_resp.text
     assert approve_resp.json()["status"] == "approved"
 
-    same_identity_resp = await client.post(f"/policy-versions/{version_id}/activate", json={}, headers=_auth(designer))
+    same_identity_resp = await client.post(
+        f"/policy-versions/{version_id}/activate", json={}, headers=await _auth(client, designer)
+    )
     assert same_identity_resp.status_code == 200  # non-financial-impact node -- no maker/checker gate applies
 
     kill_resp = await client.post(
-        f"/policy-versions/{version_id}/kill-switch", json={"reason": "manual test rehearsal"}, headers=_auth(checker)
+        f"/policy-versions/{version_id}/kill-switch",
+        json={"reason": "manual test rehearsal"},
+        headers=await _auth(client, checker),
     )
     assert kill_resp.status_code == 200
     assert kill_resp.json()["status"] == "suspended"
 
-    transitions_resp = await client.get(f"/policy-versions/{version_id}/transitions", headers=_auth(designer))
+    transitions_resp = await client.get(f"/policy-versions/{version_id}/transitions", headers=await _auth(client, designer))
     assert transitions_resp.status_code == 200
     to_statuses = [t["to_status"] for t in transitions_resp.json()["items"]]
     assert to_statuses == ["simulation", "business_review", "risk_review", "approved", "active", "suspended"]
 
 
 async def test_submit_for_approval_rejects_invalid_graph(client, designer):
-    graph_resp = await client.post("/policy-graphs", json={"name": "bad graph", "owner": designer}, headers=_auth(designer))
+    graph_resp = await client.post(
+        "/policy-graphs", json={"name": "bad graph", "owner": designer}, headers=await _auth(client, designer)
+    )
     graph_id = graph_resp.json()["id"]
-    version_resp = await client.post(f"/policy-graphs/{graph_id}/versions", json={"version_number": 1}, headers=_auth(designer))
+    version_resp = await client.post(
+        f"/policy-graphs/{graph_id}/versions", json={"version_number": 1}, headers=await _auth(client, designer)
+    )
     version_id = version_resp.json()["id"]
 
-    await client.post(f"/policy-versions/{version_id}/nodes", json=[_terminal_node("orphan_start")], headers=_auth(designer))
+    await client.post(
+        f"/policy-versions/{version_id}/nodes", json=[_terminal_node("orphan_start")], headers=await _auth(client, designer)
+    )
     await client.post(
         f"/policy-versions/{version_id}/edges",
         json=[{"from_node_key": "orphan_start", "to_node_key": "ghost", "condition_label": None}],
-        headers=_auth(designer),
+        headers=await _auth(client, designer),
     )
 
-    validate_resp = await client.post(f"/policy-versions/{version_id}/validate", headers=_auth(designer))
+    validate_resp = await client.post(f"/policy-versions/{version_id}/validate", headers=await _auth(client, designer))
     assert any(i["code"] == "dangling_reference" for i in validate_resp.json()["issues"])
 
     for status in ("simulation", "business_review", "risk_review"):
-        await client.post(f"/policy-versions/{version_id}/transition", json={"to_status": status}, headers=_auth(designer))
+        await client.post(
+            f"/policy-versions/{version_id}/transition", json={"to_status": status}, headers=await _auth(client, designer)
+        )
 
-    approve_resp = await client.post(f"/policy-versions/{version_id}/submit-for-approval", json={}, headers=_auth(designer))
+    approve_resp = await client.post(
+        f"/policy-versions/{version_id}/submit-for-approval", json={}, headers=await _auth(client, designer)
+    )
     assert approve_resp.status_code == 422
     body = approve_resp.json()
     assert body["error"]["code"] == "graph_invalid"
@@ -188,10 +230,12 @@ async def test_submit_for_approval_rejects_invalid_graph(client, designer):
 
 async def test_financial_impact_node_activation_requires_two_distinct_identities(client, designer, checker):
     graph_resp = await client.post(
-        "/policy-graphs", json={"name": "financial policy", "owner": designer}, headers=_auth(designer)
+        "/policy-graphs", json={"name": "financial policy", "owner": designer}, headers=await _auth(client, designer)
     )
     graph_id = graph_resp.json()["id"]
-    version_resp = await client.post(f"/policy-graphs/{graph_id}/versions", json={"version_number": 1}, headers=_auth(designer))
+    version_resp = await client.post(
+        f"/policy-graphs/{graph_id}/versions", json={"version_number": 1}, headers=await _auth(client, designer)
+    )
     version_id = version_resp.json()["id"]
 
     dossier_resp = await client.post(
@@ -213,33 +257,41 @@ async def test_financial_impact_node_activation_requires_two_distinct_identities
             "retirement_criteria": {},
             "approved_at": "2026-08-14T00:00:00Z",
         },
-        headers=_auth(designer),
+        headers=await _auth(client, designer),
     )
     assert dossier_resp.status_code == 200, dossier_resp.text
     dossier_id = dossier_resp.json()["id"]
     await client.post(
-        f"/policy-versions/{version_id}/link-dossier", json={"research_dossier_id": dossier_id}, headers=_auth(designer)
+        f"/policy-versions/{version_id}/link-dossier",
+        json={"research_dossier_id": dossier_id},
+        headers=await _auth(client, designer),
     )
 
     nodes = [_rule_node("start", financial_impact=True), _terminal_node("low_path"), _terminal_node("high_path")]
-    await client.post(f"/policy-versions/{version_id}/nodes", json=nodes, headers=_auth(designer))
+    await client.post(f"/policy-versions/{version_id}/nodes", json=nodes, headers=await _auth(client, designer))
     await client.post(
         f"/policy-versions/{version_id}/edges",
         json=[
             {"from_node_key": "start", "to_node_key": "low_path", "condition_label": "low"},
             {"from_node_key": "start", "to_node_key": "high_path", "condition_label": "high"},
         ],
-        headers=_auth(designer),
+        headers=await _auth(client, designer),
     )
     for status in ("simulation", "business_review", "risk_review"):
-        await client.post(f"/policy-versions/{version_id}/transition", json={"to_status": status}, headers=_auth(designer))
-    await client.post(f"/policy-versions/{version_id}/submit-for-approval", json={}, headers=_auth(designer))
+        await client.post(
+            f"/policy-versions/{version_id}/transition", json={"to_status": status}, headers=await _auth(client, designer)
+        )
+    await client.post(f"/policy-versions/{version_id}/submit-for-approval", json={}, headers=await _auth(client, designer))
 
-    same_identity_resp = await client.post(f"/policy-versions/{version_id}/activate", json={}, headers=_auth(designer))
+    same_identity_resp = await client.post(
+        f"/policy-versions/{version_id}/activate", json={}, headers=await _auth(client, designer)
+    )
     assert same_identity_resp.status_code == 409
     assert same_identity_resp.json()["error"]["code"] == "maker_checker_violation"
 
-    different_identity_resp = await client.post(f"/policy-versions/{version_id}/activate", json={}, headers=_auth(checker))
+    different_identity_resp = await client.post(
+        f"/policy-versions/{version_id}/activate", json={}, headers=await _auth(client, checker)
+    )
     assert different_identity_resp.status_code == 200
     assert different_identity_resp.json()["status"] == "active"
 
@@ -257,7 +309,7 @@ async def test_simulate_and_read_back_case_traces(client, designer):
                 {"case_id": "high1", "inputs": {"amount": 900}, "actual_outcome_label": None},
             ],
         },
-        headers=_auth(designer),
+        headers=await _auth(client, designer),
     )
     assert simulate_resp.status_code == 200, simulate_resp.text
     run = simulate_resp.json()
@@ -265,7 +317,7 @@ async def test_simulate_and_read_back_case_traces(client, designer):
     assert run["completed_count"] == 2
     assert run["terminal_distribution"] == {"low_path": 1, "high_path": 1}
 
-    traces_resp = await client.get(f"/simulation-runs/{run['id']}/case-traces", headers=_auth(designer))
+    traces_resp = await client.get(f"/simulation-runs/{run['id']}/case-traces", headers=await _auth(client, designer))
     assert traces_resp.status_code == 200
     traces_by_case = {t["case_id"]: t for t in traces_resp.json()["items"]}
     assert traces_by_case["low1"]["terminal_node_key"] == "low_path"
@@ -275,20 +327,22 @@ async def test_simulate_and_read_back_case_traces(client, designer):
 
 async def test_compare_versions(client, designer):
     _graph_id, version_id = await _build_clean_graph(client, actor=designer)
-    fork_resp = await client.post(f"/policy-versions/{version_id}/fork", headers=_auth(designer))
+    fork_resp = await client.post(f"/policy-versions/{version_id}/fork", headers=await _auth(client, designer))
     other_version_id = fork_resp.json()["id"]
 
     compare_resp = await client.post(
         f"/policy-versions/{version_id}/compare/{other_version_id}",
         json={"case_set_label": "identical-graphs", "cases": [{"case_id": "c1", "inputs": {"amount": 100}}]},
-        headers=_auth(designer),
+        headers=await _auth(client, designer),
     )
     assert compare_resp.status_code == 200, compare_resp.text
     assert compare_resp.json()["terminal_distribution"] == {"agree": 1, "disagree": 0}
 
 
 async def test_read_only_user_cannot_write(client, read_only_user):
-    resp = await client.post("/policy-graphs", json={"name": "x", "owner": read_only_user}, headers=_auth(read_only_user))
+    resp = await client.post(
+        "/policy-graphs", json={"name": "x", "owner": read_only_user}, headers=await _auth(client, read_only_user)
+    )
     assert resp.status_code == 403
 
 

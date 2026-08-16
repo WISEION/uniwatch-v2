@@ -11,13 +11,14 @@ from fastapi import FastAPI
 from packages.platform.app_factory import build_app
 from packages.platform.settings import Settings
 
-from .routers import admin_users, algoritm, calibration, decision, execution_ledger
+from .routers import admin_users, algoritm, auth, calibration, decision, execution_ledger
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     return build_app(
         title="UNIWatch v2 API",
         routers=[
+            auth.router,
             admin_users.router,
             decision.router,
             execution_ledger.router,

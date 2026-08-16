@@ -45,7 +45,7 @@ const CONTENT: VersionContent = {
 };
 
 describe("accessibility (axe)", () => {
-  it("App's connection form has no automatically-detectable violations", async () => {
+  it("App's signed-out state (the login form, Phase 6 task 6.A) has no automatically-detectable violations", async () => {
     const { container } = render(<App />);
     expectNoViolations(await axe(container));
   });

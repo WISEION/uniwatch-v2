@@ -1,0 +1,57 @@
+{
+  "_synthetic": true,
+  "_comment": "SYNTHETIC EXAMPLE ONLY -- fabricated for illustration of the shape a real, human-exported legacy snapshot must have. Every ID, organization name, and date below is invented. This file is a contract document (fixtures/legacy-snapshots/README.md), never a real export. Do not treat any value here as real legacy data.",
+  "source": "etender",
+  "date_range": { "from": "2026-01-01", "to": "2026-01-31" },
+  "exported_at": "2026-08-14T09:00:00",
+  "exported_by": "synthetic-example-generator",
+  "records": [
+    {
+      "source_record_id": "SYN-900001",
+      "record_kind": "design_tender",
+      "status": "closed",
+      "key_details": {
+        "_synthetic": true,
+        "buyer_organization_name": "Synthetic Example Regional Authority",
+        "event_name": "Synthetic design-tender example: rural road resurfacing",
+        "publish_date": "2026-01-05"
+      },
+      "captured_at": "2026-01-20T00:00:00",
+      "boq": {
+        "present": true,
+        "completeness_status": "complete",
+        "line_count": 42
+      }
+    },
+    {
+      "source_record_id": "SYN-900002",
+      "record_kind": "procurement_plan",
+      "status": "open",
+      "key_details": {
+        "_synthetic": true,
+        "buyer_organization_name": "Synthetic Example District Health Center",
+        "event_name": "Synthetic procurement-plan example: medical supplies 2026",
+        "publish_date": "2026-01-10"
+      },
+      "captured_at": "2026-01-18T00:00:00",
+      "boq": null
+    },
+    {
+      "source_record_id": "SYN-900003",
+      "record_kind": "design_tender",
+      "status": "open",
+      "key_details": {
+        "_synthetic": true,
+        "buyer_organization_name": "Synthetic Example Municipal Works Office",
+        "event_name": "Synthetic design-tender example: bridge feasibility study",
+        "publish_date": "2026-01-22"
+      },
+      "captured_at": "2026-01-29T00:00:00",
+      "boq": {
+        "present": true,
+        "completeness_status": null,
+        "line_count": null
+      }
+    }
+  ]
+}

@@ -15,6 +15,7 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from apps.api_tender.main import create_app as create_tender_app
+from packages.platform.auth.password_hashing import hash_password
 from packages.platform.settings import Settings
 from packages.tender.boq_line_model import BoqLine
 from packages.tender.boq_lines_store import store_boq_lines
@@ -22,6 +23,15 @@ from packages.tender.normalized import create_normalized_version, get_or_create_
 from packages.tender.raw_snapshot import save_raw_snapshot
 
 RECALC_FLAGS_PERMISSIONS = ("decision.recalc_flags.read",)
+
+# Phase 6 task 6.A (D-IDP): a fixed, arbitrary test password shared by every
+# user this file seeds.
+TEST_PASSWORD = "test-password-123"
+
+
+async def _login(client: httpx.AsyncClient, username: str) -> None:
+    response = await client.post("/auth/login", json={"username": username, "password": TEST_PASSWORD})
+    assert response.status_code == 200, response.text
 
 
 @pytest_asyncio.fixture
@@ -52,7 +62,8 @@ async def pm_user(engine):
                 {"r": role_id, "p": perm_id},
             )
         await conn.execute(
-            text("INSERT INTO users (username, display_name, role_id) VALUES ('pm-1', 'PM One', :r)"), {"r": role_id}
+            text("INSERT INTO users (username, display_name, role_id, password_hash) VALUES ('pm-1', 'PM One', :r, :ph)"),
+            {"r": role_id, "ph": hash_password(TEST_PASSWORD)},
         )
     return "pm-1"
 
@@ -100,7 +111,8 @@ async def test_recalc_flags_requires_auth(client, tender_with_boq):
 
 
 async def test_recalc_flags_returns_empty_list_when_none_flagged(client, pm_user, tender_with_boq):
-    response = await client.get(f"/tenders/{tender_with_boq}/recalc-flags", headers={"X-Dev-User": "pm-1"})
+    await _login(client, pm_user)
+    response = await client.get(f"/tenders/{tender_with_boq}/recalc-flags")
     assert response.status_code == 200
     assert response.json() == []
 
@@ -126,7 +138,8 @@ async def test_recalc_flags_returns_a_flag_after_one_is_stored(client, pm_user, 
             flagged_at="2026-08-09T12:00:00+00:00",
         )
 
-    response = await client.get(f"/tenders/{tender_with_boq}/recalc-flags", headers={"X-Dev-User": "pm-1"})
+    await _login(client, pm_user)
+    response = await client.get(f"/tenders/{tender_with_boq}/recalc-flags")
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 1

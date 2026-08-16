@@ -2,10 +2,10 @@
 // function per route, no business logic here (the server is the source
 // of truth for every check; this file only shapes the HTTP call).
 //
-// X-Dev-User is the same dev-only identity header
-// apps/api_tender/deps.py::get_current_identity reads (D-IDP -- a real
-// IdP integration -- is still an open decision per docs/CONTEXT.md); this
-// client never invents a fallback identity.
+// Identity comes from the session cookie apps/api_tender/routers/auth.py
+// issues on login (Phase 6, task 6.A, D-IDP) -- credentials: "include" is
+// what makes the browser attach that cookie automatically; this client
+// never sends a client-supplied identity header.
 
 export interface ApiErrorBody {
   error: {
@@ -132,16 +132,15 @@ export interface CaseTrace {
 
 export interface AlgoritmClientOptions {
   baseUrl: string;
-  username: string;
 }
 
-export function createAlgoritmClient({ baseUrl, username }: AlgoritmClientOptions) {
+export function createAlgoritmClient({ baseUrl }: AlgoritmClientOptions) {
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${baseUrl}${path}`, {
       ...init,
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        "X-Dev-User": username,
         ...(init?.headers ?? {}),
       },
     });
