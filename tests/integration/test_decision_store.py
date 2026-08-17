@@ -11,6 +11,7 @@ from packages.decision.bid_readiness import BidReadinessCandidate, CriticalLine
 from packages.decision.boq_summary import BoqMatchSummary
 from packages.decision.decision_model import Decision, GoNoGoInputs
 from packages.decision.decision_store import (
+    list_decision_cycle_seconds,
     list_lock_in_requirements_by_tender,
     list_tenders_with_active_bid_decision,
     load_bid_readiness_candidate,
@@ -176,3 +177,61 @@ async def test_list_tenders_with_active_bid_decision_uses_the_most_recent_decisi
         result = await list_tenders_with_active_bid_decision(conn)
 
     assert tender_id not in result
+
+
+async def test_list_decision_cycle_seconds_includes_a_decision_with_a_candidate(engine):
+    summary = BoqMatchSummary(
+        green_amount=Decimal("1000"),
+        yellow_amount=Decimal("0"),
+        red_amount=Decimal("0"),
+        unpriced_line_count=0,
+        non_matchable_line_count=0,
+        non_matchable_amount=Decimal("0"),
+        total_priced_amount=Decimal("1000"),
+        green_pct=100.0,
+        yellow_pct=0.0,
+        red_pct=0.0,
+    )
+    async with engine.begin() as conn:
+        tender_id = await _make_tender(conn, "test-decision-cycle-1")
+        candidate = BidReadinessCandidate(
+            tender_id=tender_id,
+            summary=summary,
+            is_lottery=False,
+            critical_lines=(),
+            computed_at="2026-08-08T00:00:00+00:00",
+        )
+        candidate_id = await store_bid_readiness_candidate(conn, candidate)
+        decision = Decision(
+            tender_id=tender_id,
+            decision_type="bid",
+            conditions=(),
+            deadline=None,
+            justification="test",
+            actor="pm-1",
+            decided_at="2026-08-09T00:00:00+00:00",
+            go_no_go_inputs_id=None,
+            bid_readiness_candidate_id=candidate_id,
+        )
+        await store_decision(conn, decision)
+
+    async with engine.connect() as conn:
+        cycles = await list_decision_cycle_seconds(conn)
+
+    matching = [c for c in cycles if c["tender_id"] == tender_id]
+    assert len(matching) == 1
+    assert matching[0]["cycle_seconds"] == 86400.0  # exactly 1 day between computed_at and decided_at
+
+
+async def test_list_decision_cycle_seconds_excludes_go_no_go_decisions(engine):
+    # A decision with go_no_go_inputs_id instead of bid_readiness_candidate_id
+    # (the _decision() helper's shape) has no candidate to time against and
+    # must not appear.
+    async with engine.begin() as conn:
+        tender_id = await _make_tender(conn, "test-decision-cycle-2")
+        await store_decision(conn, _decision(tender_id, "no_go", "2026-08-08T00:00:00+00:00"))
+
+    async with engine.connect() as conn:
+        cycles = await list_decision_cycle_seconds(conn)
+
+    assert all(c["tender_id"] != tender_id for c in cycles)

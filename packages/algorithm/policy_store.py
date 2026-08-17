@@ -510,6 +510,33 @@ async def list_versions_by_graph(conn: AsyncConnection, *, policy_graph_id: int)
     return [dict(row) for row in rows]
 
 
+async def list_all_active_versions(conn: AsyncConnection) -> list[dict[str, Any]]:
+    """Policy/model version-usage signal (master plan §23.1):
+    list_versions_by_graph already answers "which versions does this one
+    graph have" -- this is the cross-graph rollup an observability signal
+    needs (every currently-active version, across every graph) without the
+    caller enumerating every graph id first."""
+    rows = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT pv.id, pv.policy_graph_id, pg.name AS graph_name, pv.version_number,
+                           pv.status, pv.created_by, pv.created_at
+                    FROM policy_versions pv
+                    JOIN policy_graphs pg ON pg.id = pv.policy_graph_id
+                    WHERE pv.status = 'active'
+                    ORDER BY pg.name
+                    """
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
 async def list_transitions_by_version(conn: AsyncConnection, *, policy_version_id: int) -> list[dict[str, Any]]:
     rows = (
         (

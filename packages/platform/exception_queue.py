@@ -11,6 +11,7 @@ not in-memory state."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -140,6 +141,32 @@ async def list_open(conn: AsyncConnection, *, category: str | None = None) -> li
             .all()
         )
     return [_row_to_record(row) for row in rows]
+
+
+async def last_seen_by_source(conn: AsyncConnection, *, exception_type: str | None = None) -> dict[str, datetime]:
+    """Source health signal (master plan §23.1's "source last success/
+    failure/schema drift" line): every ingestion job that catches
+    SchemaDriftDetected calls enqueue_exception(exception_type="schema_drift",
+    ...), so this table is the only durable trail of drift/failure events
+    per source -- packages/tender/schema_drift.py itself is pure and
+    persists nothing. Pass exception_type="schema_drift" for drift-only
+    history, or leave it None for "any exception queue entry, of any type,
+    per source" (a broader failure signal)."""
+    if exception_type is None:
+        rows = (
+            await conn.execute(text("SELECT source, max(first_seen_at) AS last_seen FROM exception_queue GROUP BY source"))
+        ).all()
+    else:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT source, max(first_seen_at) AS last_seen FROM exception_queue "
+                    "WHERE exception_type = :exception_type GROUP BY source"
+                ),
+                {"exception_type": exception_type},
+            )
+        ).all()
+    return {row.source: row.last_seen for row in rows}
 
 
 async def schedule_retry(conn: AsyncConnection, *, id: int, backoff_seconds: int) -> ExceptionRecord:

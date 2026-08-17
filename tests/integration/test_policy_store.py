@@ -20,6 +20,7 @@ from packages.algorithm.policy_store import (
     create_policy_graph,
     fork_new_draft_version,
     kill_switch,
+    list_all_active_versions,
     list_edges,
     list_nodes,
     list_transitions_by_version,
@@ -513,3 +514,18 @@ async def test_kill_switch_rehearsal_preserves_prior_journal_and_allows_reactiva
     assert status_after_reactivation == "active"
     assert len(transitions_final) == len(transitions_before) + 2
     assert transitions_final[-1]["to_status"] == "active"
+
+
+async def test_list_all_active_versions_includes_a_real_active_version(engine):
+    async with engine.begin() as conn:
+        graph_id, version_id = await _new_graph_draft_and_approve(conn, created_by="signal-test-designer")
+        await activate_version(conn, policy_version_id=version_id, changed_by="signal-test-approver")
+
+    async with engine.connect() as conn:
+        active_versions = await list_all_active_versions(conn)
+
+    matching = [v for v in active_versions if v["policy_graph_id"] == graph_id]
+    assert len(matching) == 1
+    assert matching[0]["id"] == version_id
+    assert matching[0]["status"] == "active"
+    assert matching[0]["graph_name"] == "Bid/No-Bid -- Water Infrastructure"
