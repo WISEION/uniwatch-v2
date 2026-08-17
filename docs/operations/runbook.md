@@ -54,9 +54,32 @@ itself — that only happens at step 5.
 
 ### 3. Check whether the restore drill is still current
 
-Before deploying, confirm a restore drill (`scripts/backup.py` /
-`scripts/restore.py`, per `NFR-REL-01`) has actually been performed and
-logged — not merely scheduled — and that its result is a pass.
+Before deploying, confirm a restore drill has actually been performed and
+logged — not merely scheduled — and that its result is a pass. The real
+mechanism (Phase 6 task 6.C) is `scripts/run_restore_drill.py`: it runs
+`scripts/backup.py` against `--source-database-url`, restores that backup
+into `--drill-database-url` (a disposable scratch database, never the
+source or a production target), and records the pass/fail result into the
+SOURCE database's `restore_drill_runs` table via
+`packages/platform/restore_drill.py::record_restore_drill`. Invoke it as a
+module, not as a bare script:
+
+```
+python -m scripts.run_restore_drill --source-database-url <source> --drill-database-url <scratch> --backup-dir <dir>
+```
+
+`python scripts/run_restore_drill.py ...` fails with
+`ModuleNotFoundError` — the script does an absolute `from scripts.backup
+import ...` import, which only resolves when `scripts` is imported as a
+package (`python -m scripts.run_restore_drill`), not when the script is
+run directly. This is a real, confirmed limitation of the script, not a
+typo to avoid.
+
+Check "has a drill been logged, and did it pass" via
+`packages/platform/restore_drill.py::latest_passing_drill`, or more simply
+by reading `scripts/collect_signals.py`'s `restore_drill.latest_passing`
+field in its JSON payload — a `null` value there means no passing drill has
+ever been recorded for this environment.
 
 **What "recent enough" means is not yet defined.** `D-SLO` (`TBD-01`,
 `TBD-02`) is the open decision that would give a restore-drill an explicit
@@ -70,9 +93,10 @@ computed pass/fail. If there is any doubt, re-run the drill before
 proceeding rather than deploying against a drill whose currency is in
 question.
 
-If no restore drill has ever been logged for this environment, this step
-fails outright — proceed to step 8's rollback/blocked-release handling
-instead of continuing to step 4.
+If no restore drill has ever been logged for this environment (i.e.
+`restore_drill.latest_passing` is `null`), this step fails outright —
+proceed to step 8's rollback/blocked-release handling instead of continuing
+to step 4.
 
 ### 4. Run the live invariant check
 
