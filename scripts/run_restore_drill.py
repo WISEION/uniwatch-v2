@@ -20,27 +20,38 @@ from pathlib import Path
 
 from packages.platform.db import connection_scope, get_engine
 from packages.platform.restore_drill import record_restore_drill
-from scripts.backup import create_backup
+from scripts.backup import BackupError, create_backup
 from scripts.restore import RestoreError, restore_backup
 
 
 async def run_drill(*, source_database_url: str, drill_database_url: str, backup_dir: Path) -> int:
-    backup_path = create_backup(source_database_url, backup_dir)
-
     passed = True
-    detail = f"restored {backup_path.name} into drill target successfully"
+    detail = ""
+    backup_filename = ""
+
     try:
-        restore_backup(backup_path, drill_database_url)
-    except RestoreError as exc:
+        backup_path = create_backup(source_database_url, backup_dir)
+        backup_filename = backup_path.name
+    except BackupError as exc:
         passed = False
         detail = str(exc)
+        # Use a placeholder filename when backup fails -- not a fake real filename
+        backup_filename = "(backup failed)"
+    else:
+        # Only attempt restore if backup succeeded
+        detail = f"restored {backup_filename} into drill target successfully"
+        try:
+            restore_backup(backup_path, drill_database_url)
+        except RestoreError as exc:
+            passed = False
+            detail = str(exc)
 
     engine = get_engine(source_database_url)
     try:
         async with connection_scope(engine) as conn:
             await record_restore_drill(
                 conn,
-                backup_filename=backup_path.name,
+                backup_filename=backup_filename,
                 target_database=drill_database_url,
                 passed=passed,
                 detail=detail,

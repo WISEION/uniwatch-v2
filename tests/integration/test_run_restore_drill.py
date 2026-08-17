@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
@@ -17,6 +18,7 @@ import pytest_asyncio
 from sqlalchemy import text
 
 from packages.platform.restore_drill import latest_passing_drill
+from scripts.backup import BackupError
 from scripts.run_restore_drill import run_drill
 
 
@@ -63,3 +65,44 @@ async def test_run_drill_records_a_passing_result_in_the_source_database(engine,
     assert latest is not None
     assert latest["target_database"] == drill_target_dsn
     assert latest["backup_filename"].startswith("backup_")
+
+
+async def test_run_drill_records_a_failed_result_when_backup_fails(engine, _database_url, drill_target_dsn, tmp_path: Path):
+    """When create_backup() raises BackupError, run_drill() should:
+    1. Return exit code 1
+    2. Record a passed=False row with the error message as detail
+    3. Use a placeholder filename (not a fake real filename)
+    """
+    backup_error_msg = "pg_dump not found on PATH -- install the PostgreSQL client tools (postgresql-client)"
+
+    with patch("scripts.run_restore_drill.create_backup") as mock_create_backup:
+        mock_create_backup.side_effect = BackupError(backup_error_msg)
+
+        exit_code = await run_drill(
+            source_database_url=_database_url,
+            drill_database_url=drill_target_dsn,
+            backup_dir=tmp_path,
+        )
+
+    assert exit_code == 1
+
+    # Verify the failure was recorded in the source database
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(
+                """
+                SELECT id, backup_filename, target_database, passed, detail, drilled_at
+                FROM restore_drill_runs
+                ORDER BY drilled_at DESC, id DESC
+                LIMIT 1
+                """
+            )
+        )
+        latest = result.mappings().first()
+
+    assert latest is not None
+    assert latest["passed"] is False
+    assert latest["detail"] == backup_error_msg
+    assert latest["target_database"] == drill_target_dsn
+    # Placeholder filename when backup fails -- not a fake real filename
+    assert latest["backup_filename"] == "(backup failed)"
