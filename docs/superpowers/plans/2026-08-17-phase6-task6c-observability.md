@@ -163,12 +163,18 @@ async def test_latest_passing_drill_ignores_failed_drills(engine):
 async def test_latest_passing_drill_returns_the_most_recent_pass(engine):
     async with engine.begin() as conn:
         await record_restore_drill(
-            conn, backup_filename="backup_20260817T020000Z.dump", target_database="uniwatch_drill",
-            passed=True, detail="first pass",
+            conn,
+            backup_filename="backup_20260817T020000Z.dump",
+            target_database="uniwatch_drill",
+            passed=True,
+            detail="first pass",
         )
         second_id = await record_restore_drill(
-            conn, backup_filename="backup_20260817T030000Z.dump", target_database="uniwatch_drill",
-            passed=True, detail="second pass",
+            conn,
+            backup_filename="backup_20260817T030000Z.dump",
+            target_database="uniwatch_drill",
+            passed=True,
+            detail="second pass",
         )
 
     async with engine.connect() as conn:
@@ -341,9 +347,7 @@ async def drill_target_dsn(_asyncpg_base_dsn):
             await admin_conn.close()
 
 
-async def test_run_drill_records_a_passing_result_in_the_source_database(
-    engine, _database_url, drill_target_dsn, tmp_path: Path
-):
+async def test_run_drill_records_a_passing_result_in_the_source_database(engine, _database_url, drill_target_dsn, tmp_path: Path):
     async with engine.begin() as conn:
         await conn.execute(text("CREATE TABLE drill_probe (id INT PRIMARY KEY)"))
         await conn.execute(text("INSERT INTO drill_probe (id) VALUES (1)"))
@@ -602,8 +606,13 @@ Append to `tests/integration/test_jobs_store.py`:
 async def test_count_by_status_reflects_real_rows(engine):
     store = JobStore()
     identity = JobIdentity(
-        job_type="test_signal_job", params={}, source="test", range_start=None, range_end=None,
-        contract_version="v1", correlation_id="corr-signal-1",
+        job_type="test_signal_job",
+        params={},
+        source="test",
+        range_start=None,
+        range_end=None,
+        contract_version="v1",
+        correlation_id="corr-signal-1",
     )
     async with engine.begin() as conn:
         await store.enqueue(conn, identity)
@@ -617,8 +626,13 @@ async def test_count_by_status_reflects_real_rows(engine):
 async def test_list_dead_lettered_returns_only_terminally_failed_jobs(engine):
     store = JobStore()
     identity = JobIdentity(
-        job_type="test_dead_letter_job", params={}, source="test", range_start=None, range_end=None,
-        contract_version="v1", correlation_id="corr-signal-2",
+        job_type="test_dead_letter_job",
+        params={},
+        source="test",
+        range_start=None,
+        range_end=None,
+        contract_version="v1",
+        correlation_id="corr-signal-2",
     )
     async with engine.begin() as conn:
         job_id = await store.enqueue(conn, identity)
@@ -647,8 +661,12 @@ Append to `tests/integration/test_exception_queue.py`:
 async def test_last_seen_by_source_reflects_the_most_recent_event(engine):
     async with engine.begin() as conn:
         await enqueue_exception(
-            conn, source="etender", exception_type="schema_drift", category="needs_human",
-            reason="field removed", correlation_id="corr-signal-3",
+            conn,
+            source="etender",
+            exception_type="schema_drift",
+            category="needs_human",
+            reason="field removed",
+            correlation_id="corr-signal-3",
         )
 
     async with engine.connect() as conn:
@@ -660,8 +678,12 @@ async def test_last_seen_by_source_reflects_the_most_recent_event(engine):
 async def test_last_seen_by_source_filters_by_exception_type(engine):
     async with engine.begin() as conn:
         await enqueue_exception(
-            conn, source="worldbank_projects_api", exception_type="egress_rejected", category="retryable",
-            reason="blocked host", correlation_id="corr-signal-4",
+            conn,
+            source="worldbank_projects_api",
+            exception_type="egress_rejected",
+            category="retryable",
+            reason="blocked host",
+            correlation_id="corr-signal-4",
         )
 
     async with engine.connect() as conn:
@@ -704,21 +726,18 @@ Expected: FAIL — `AttributeError: 'JobStore' object has no attribute 'count_by
 In `packages/platform/jobs.py`, add these two methods to the `JobStore` class (after `get`, using the existing `_JOB_COLUMNS` and `_row_to_job` helpers already defined above the class):
 
 ```python
-    async def count_by_status(self, conn: AsyncConnection) -> dict[str, int]:
-        rows = (await conn.execute(text("SELECT status, count(*) AS n FROM jobs GROUP BY status"))).all()
-        return {row.status: row.n for row in rows}
+async def count_by_status(self, conn: AsyncConnection) -> dict[str, int]:
+    rows = (await conn.execute(text("SELECT status, count(*) AS n FROM jobs GROUP BY status"))).all()
+    return {row.status: row.n for row in rows}
 
-    async def list_dead_lettered(self, conn: AsyncConnection) -> list[Job]:
-        rows = (
-            (
-                await conn.execute(
-                    text(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE status = 'failed' ORDER BY updated_at DESC")
-                )
-            )
-            .mappings()
-            .all()
-        )
-        return [_row_to_job(row) for row in rows]
+
+async def list_dead_lettered(self, conn: AsyncConnection) -> list[Job]:
+    rows = (
+        (await conn.execute(text(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE status = 'failed' ORDER BY updated_at DESC")))
+        .mappings()
+        .all()
+    )
+    return [_row_to_job(row) for row in rows]
 ```
 
 - [ ] **Step 6: Implement `exception_queue.last_seen_by_source`**
@@ -737,9 +756,7 @@ async def last_seen_by_source(conn: AsyncConnection, *, exception_type: str | No
     per source" (a broader failure signal)."""
     if exception_type is None:
         rows = (
-            await conn.execute(
-                text("SELECT source, max(first_seen_at) AS last_seen FROM exception_queue GROUP BY source")
-            )
+            await conn.execute(text("SELECT source, max(first_seen_at) AS last_seen FROM exception_queue GROUP BY source"))
         ).all()
     else:
         rows = (
@@ -870,9 +887,7 @@ async def last_fetched_at_by_source(conn: AsyncConnection) -> dict[str, datetime
     successfully". A failed fetch never reaches save_raw_snapshot, so a
     source's absence from this dict is itself meaningful: it has never
     succeeded (hard ban #3 -- surfaced, not hidden)."""
-    rows = (
-        await conn.execute(text("SELECT source, max(fetched_at) AS last_fetched FROM raw_snapshots GROUP BY source"))
-    ).all()
+    rows = (await conn.execute(text("SELECT source, max(fetched_at) AS last_fetched FROM raw_snapshots GROUP BY source"))).all()
     return {row.source: row.last_fetched for row in rows}
 ```
 
@@ -920,21 +935,37 @@ Append to `tests/integration/test_decision_store.py`, reusing the file's real ex
 ```python
 async def test_list_decision_cycle_seconds_includes_a_decision_with_a_candidate(engine):
     summary = BoqMatchSummary(
-        green_amount=Decimal("1000"), yellow_amount=Decimal("0"), red_amount=Decimal("0"),
-        unpriced_line_count=0, non_matchable_line_count=0, non_matchable_amount=Decimal("0"),
-        total_priced_amount=Decimal("1000"), green_pct=100.0, yellow_pct=0.0, red_pct=0.0,
+        green_amount=Decimal("1000"),
+        yellow_amount=Decimal("0"),
+        red_amount=Decimal("0"),
+        unpriced_line_count=0,
+        non_matchable_line_count=0,
+        non_matchable_amount=Decimal("0"),
+        total_priced_amount=Decimal("1000"),
+        green_pct=100.0,
+        yellow_pct=0.0,
+        red_pct=0.0,
     )
     async with engine.begin() as conn:
         tender_id = await _make_tender(conn, "test-decision-cycle-1")
         candidate = BidReadinessCandidate(
-            tender_id=tender_id, summary=summary, is_lottery=False, critical_lines=(),
+            tender_id=tender_id,
+            summary=summary,
+            is_lottery=False,
+            critical_lines=(),
             computed_at="2026-08-08T00:00:00+00:00",
         )
         candidate_id = await store_bid_readiness_candidate(conn, candidate)
         decision = Decision(
-            tender_id=tender_id, decision_type="bid", conditions=(), deadline=None,
-            justification="test", actor="pm-1", decided_at="2026-08-09T00:00:00+00:00",
-            go_no_go_inputs_id=None, bid_readiness_candidate_id=candidate_id,
+            tender_id=tender_id,
+            decision_type="bid",
+            conditions=(),
+            deadline=None,
+            justification="test",
+            actor="pm-1",
+            decided_at="2026-08-09T00:00:00+00:00",
+            go_no_go_inputs_id=None,
+            bid_readiness_candidate_id=candidate_id,
         )
         await store_decision(conn, decision)
 
@@ -1130,9 +1161,18 @@ async def test_collect_signals_returns_every_named_category(engine, _database_ur
     payload = await collect_signals(_database_url, tmp_path)
 
     for key in (
-        "job_queue", "exception_queue", "source_freshness", "boq_completeness",
-        "decision_cycle", "policy_version_usage", "database", "restore_drill", "backup",
-        "notification_delivery", "model_drift_confidence_abstention", "reconciliation_mismatches",
+        "job_queue",
+        "exception_queue",
+        "source_freshness",
+        "boq_completeness",
+        "decision_cycle",
+        "policy_version_usage",
+        "database",
+        "restore_drill",
+        "backup",
+        "notification_delivery",
+        "model_drift_confidence_abstention",
+        "reconciliation_mismatches",
     ):
         assert key in payload, f"missing signal category: {key}"
 
@@ -1330,8 +1370,13 @@ async def test_dead_lettered_jobs_present_is_false_when_none_exist(engine):
 async def test_dead_lettered_jobs_present_fires_on_a_real_dead_letter(engine):
     store = JobStore()
     identity = JobIdentity(
-        job_type="test_alert_job", params={}, source="test", range_start=None, range_end=None,
-        contract_version="v1", correlation_id="corr-alert-1",
+        job_type="test_alert_job",
+        params={},
+        source="test",
+        range_start=None,
+        range_end=None,
+        contract_version="v1",
+        correlation_id="corr-alert-1",
     )
     async with engine.begin() as conn:
         job_id = await store.enqueue(conn, identity)
@@ -1358,8 +1403,12 @@ async def test_exception_queue_has_open_items_is_false_when_empty(engine):
 async def test_exception_queue_has_open_items_fires_on_a_real_open_item(engine):
     async with engine.begin() as conn:
         await enqueue_exception(
-            conn, source="etender", exception_type="schema_drift", category="needs_human",
-            reason="field removed", correlation_id="corr-alert-2",
+            conn,
+            source="etender",
+            exception_type="schema_drift",
+            category="needs_human",
+            reason="field removed",
+            correlation_id="corr-alert-2",
         )
         result = await exception_queue_has_open_items(conn)
     assert result.firing is True
@@ -1397,12 +1446,22 @@ async def test_fires_when_no_source_has_ever_fetched(engine):
 async def test_does_not_fire_once_every_known_source_has_fetched(engine):
     async with engine.begin() as conn:
         await save_raw_snapshot(
-            conn, source="etender", resource_type="design_tender", identity_key="fresh-1",
-            raw_body=b'{"a": 1}', contract_version="v1", correlation_id="corr-fresh-1",
+            conn,
+            source="etender",
+            resource_type="design_tender",
+            identity_key="fresh-1",
+            raw_body=b'{"a": 1}',
+            contract_version="v1",
+            correlation_id="corr-fresh-1",
         )
         await save_raw_snapshot(
-            conn, source="worldbank_projects_api", resource_type="project", identity_key="fresh-2",
-            raw_body=b'{"b": 2}', contract_version="v1", correlation_id="corr-fresh-2",
+            conn,
+            source="worldbank_projects_api",
+            resource_type="project",
+            identity_key="fresh-2",
+            raw_body=b'{"b": 2}',
+            contract_version="v1",
+            correlation_id="corr-fresh-2",
         )
         result = await source_never_succeeded(conn)
     assert result.firing is False
@@ -1463,9 +1522,7 @@ async def dead_lettered_jobs_present(conn: AsyncConnection) -> AlertResult:
     dead = await JobStore().list_dead_lettered(conn)
     if dead:
         ids = ", ".join(str(job.id) for job in dead)
-        return AlertResult(
-            name="dead_lettered_jobs_present", firing=True, detail=f"{len(dead)} dead-lettered job(s): {ids}"
-        )
+        return AlertResult(name="dead_lettered_jobs_present", firing=True, detail=f"{len(dead)} dead-lettered job(s): {ids}")
     return AlertResult(name="dead_lettered_jobs_present", firing=False, detail="no dead-lettered jobs")
 
 
@@ -1536,9 +1593,7 @@ async def source_never_succeeded(conn: AsyncConnection) -> AlertResult:
             firing=True,
             detail=f"source(s) with zero recorded fetches: {', '.join(never_seen)}",
         )
-    return AlertResult(
-        name="source_never_succeeded", firing=False, detail="every known source has at least one recorded fetch"
-    )
+    return AlertResult(name="source_never_succeeded", firing=False, detail="every known source has at least one recorded fetch")
 ```
 
 - [ ] **Step 6: Run tests to verify they pass**

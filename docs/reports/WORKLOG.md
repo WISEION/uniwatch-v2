@@ -1457,6 +1457,20 @@ DB-зависимые тесты (restore drill, invariant checker, deployment-a
 
 **Блокеры:** нет новых. `D-PILOT`/`D-SLO` остаются открытыми, не блокируют 6.B. PG18/PG16 client-версийный skew и общая Docker-нестабильность — локальные находки этой машины, не блокеры самой задачи.
 
+## 2026-08-16/17 — PR #40 (задача 6.B) CI-фикс и мердж
+
+**Контекст:** PR #40 (задача 6.B) открылся с Full gate `FAILURE` — реальный баг в новом коде этой же задачи, не флейк CI.
+
+**Найдено и исправлено:**
+1. `packages/platform/deployment_authorization.py`: `get_authorization`/`latest_authorization_for_commit` безусловно вызывали `json.loads()` на `image_digests`, но SQLAlchemy's asyncpg-диалект уже декодирует `jsonb`-колонки в `dict` — падало с `TypeError: the JSON object must be str, bytes or bytearray, not dict` на GitHub-раннерах (Linux; локально на этой машине DB-тесты не гонялись вживую в задаче 6.B, поэтому баг не был пойман раньше). Исправлено тем же `isinstance(x, str)`-guard'ом, что уже используется в `signals_store.py`/`policy_store.py`/`decision_store.py`.
+2. После исправления #1 вскрылся второй, ранее замаскированный баг: `latest_authorization_for_commit`'s `ORDER BY authorized_at DESC` — `authorized_at DEFAULT now()` — время начала транзакции в Postgres, поэтому два authorization, записанные в одной транзакции, получают одинаковый timestamp, и порядок при равенстве не гарантирован. Добавлен `id DESC` как tie-breaker.
+
+**Подтверждение:** оба теста `test_deployment_authorization_store.py` + `test_deployment_authorization.py` (9 тестов) зелёные локально против реального testcontainer-Postgres; `ruff format`/`ruff check`/`mypy`/`tools/check_v1_untouched.py` — чисто на изменённом файле. Полный локальный `pytest tests/` не переподтверждён (та же зарегистрированная Windows Docker-нестабильность/медленность этой машины — прогон был на порядок медленнее CI и остановлен вручную после ~1% прогресса за много минут без подтверждённого прогресса; решено полагаться на CI, тот же осознанный компромисс, что и в 6.A/6.B). Коммит `e897abe` запушен на ту же ветку; PR #40 пересобран, Full gate прошёл (`9m16s`), Fast gate/Security scan/Build service images — тоже зелёные; `live-fetch` — красный, но это некритичная (best-effort) проверка (`etender.gov.az` недоступен с GitHub-раннеров, ожидаемо). PR #40 смёржен (`WISEION`, отдельная identity от `accessunico` — hard ban #6 соблюдён), `master` обновлён до `ed69210`.
+
+**Дальше:** `master` реально содержит всю задачу 6.B. Следующий шаг по `PLAN-MISSION-6.md` §3 — 6.C (observability) или 6.D (требует `D-PILOT`) — выбор ожидает явного решения владельца.
+
+**Блокеры:** нет новых.
+
 ## 2026-08-17 — Задача 6.C (observability)
 
 **Контекст:** `PLAN-MISSION-6.md` §3 задача 6.C — сигналы, ранбуки, алерты, категории SLO, per master plan §23.
