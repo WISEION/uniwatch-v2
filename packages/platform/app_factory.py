@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -109,6 +110,19 @@ def build_app(*, title: str, routers: list[APIRouter], settings: Settings | None
     app.state.settings = settings
     app.state.engine = engine
     app.add_middleware(CorrelationIdMiddleware)
+    # Added last so it wraps outermost (Starlette applies user_middleware
+    # in reverse-registration order) -- CORS must see the OPTIONS preflight
+    # and every response (including error responses) before anything else,
+    # or the browser drops the response even when the server-side logic
+    # behind it succeeded. Explicit origin allowlist only -- see
+    # Settings.cors_allowed_origins for why "*" is never used here.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.cors_allowed_origins),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     install_error_handlers(app)
     app.include_router(build_health_router())
     for router in routers:

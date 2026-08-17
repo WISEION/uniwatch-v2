@@ -67,6 +67,28 @@ python tools/check_v1_untouched.py
 
 `DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`; both have dev defaults.
 
+## Autonomous local dev bring-up mode
+
+When asked to get the local stack running, or told to "keep going until localhost is ready," work continuously without stopping to ask permission for any reversible, local-only action: installing deps, running local migrations, starting/restarting local processes, editing local config/env files, fixing bugs found along the way, rewriting failing tests, retrying after transient errors (this project's own WORKLOG documents real Docker/testcontainers flakiness on some dev machines — retry once or twice, then say so and move on rather than looping silently). Diagnose and fix root causes rather than pausing to ask "should I fix this?" Give brief one-line progress updates, not a stream of questions.
+
+**Definition of done** (so "nonstop" has an actual stopping point):
+- `uvicorn apps.api_tender.main:app --reload --port 8001` and `uvicorn apps.api_vendor.main:app --reload --port 8002` both start and respond healthy on their readiness endpoint.
+- `python -m apps.worker.main` starts and stays up without crash-looping.
+- `cd apps/web && npm run dev` starts and the UI actually loads in a browser.
+- All four running concurrently against a real local Postgres with migrations applied.
+
+**Still stops for confirmation, even in this mode** — these are this file's own hard bans (above), not extra red tape:
+- Inventing a number for anything tagged `TBD-nn`/`D-nn` just to unblock a local run.
+- Anything touching the v1 paths (`Documents\Tendet Watcher` / `Documents\UNIWatch`).
+- A destructive action — resetting/dropping a database with real data, force-push, deleting a branch with unmerged work — even a local one, if it isn't obviously disposable dev-only state.
+- A blocker that isn't mine to resolve (e.g. "Docker Desktop isn't installed," "I need a real secret/credential from you").
+
+**Amendment 2026-08-17 — extend to production readiness.** The same "keep working without stopping to ask" posture extends to getting the system genuinely production-ready, not just locally runnable: finding and fixing real bugs the local bring-up surfaces (e.g. a missing-CORS defect found this same day, which broke every browser call from `apps/web` to `api_tender`/`api_vendor` in *every* environment, not just local dev — see git history around 2026-08-17 for the fix and how it was found), keeping `docs/operations/runbook.md`'s release gates green, building the Docker images `docker-compose.local.yml`/`apps/*/Dockerfile` define, and driving CI (`.github/workflows/ci.yml`'s Fast/Full/Security/Build gates) to green on a real PR.
+
+**Definition of done for "production version ready":** every gate in `docs/operations/runbook.md`'s release sequence passes for a real PR against `master` — CI green, live invariant check clean, a current restore drill on record — and the change is sitting in an open, reviewable PR.
+
+**What this amendment does NOT change** — hard ban #6 stands exactly as written above: green CI is not deployment authorization. "Don't stop until production is ready" means *drive the work to the point a distinct human approver can say yes* — open the PR, make it green, report it — not merge/deploy it myself. That approval step is the one place this mode always stops, by design, because the initiator and the approver being the same person (or the same agent) is the exact failure mode hard ban #6 exists to prevent. If a task genuinely cannot reach "ready" without that approval (e.g. the next step is itself the production deploy), stop there and say so plainly rather than finding a way around it.
+
 ## Architecture
 
 **Modular monolith, except Tender/Vendor (ADR-0006):** `decision`/`algorithm`/`platform` still live in
