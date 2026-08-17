@@ -67,6 +67,22 @@ python tools/check_v1_untouched.py
 
 `DATABASE_URL` (SQLAlchemy async form, e.g. `postgresql+asyncpg://uniwatch:uniwatch@localhost:5432/uniwatch`) and `EXPECTED_SCHEMA_VERSION` configure `packages/platform/settings.py`; both have dev defaults.
 
+## Autonomous local dev bring-up mode
+
+When asked to get the local stack running, or told to "keep going until localhost is ready," work continuously without stopping to ask permission for any reversible, local-only action: installing deps, running local migrations, starting/restarting local processes, editing local config/env files, fixing bugs found along the way, rewriting failing tests, retrying after transient errors (this project's own WORKLOG documents real Docker/testcontainers flakiness on some dev machines — retry once or twice, then say so and move on rather than looping silently). Diagnose and fix root causes rather than pausing to ask "should I fix this?" Give brief one-line progress updates, not a stream of questions.
+
+**Definition of done** (so "nonstop" has an actual stopping point):
+- `uvicorn apps.api_tender.main:app --reload --port 8001` and `uvicorn apps.api_vendor.main:app --reload --port 8002` both start and respond healthy on their readiness endpoint.
+- `python -m apps.worker.main` starts and stays up without crash-looping.
+- `cd apps/web && npm run dev` starts and the UI actually loads in a browser.
+- All four running concurrently against a real local Postgres with migrations applied.
+
+**Still stops for confirmation, even in this mode** — these are this file's own hard bans (above), not extra red tape:
+- Inventing a number for anything tagged `TBD-nn`/`D-nn` just to unblock a local run.
+- Anything touching the v1 paths (`Documents\Tendet Watcher` / `Documents\UNIWatch`).
+- A destructive action — resetting/dropping a database with real data, force-push, deleting a branch with unmerged work — even a local one, if it isn't obviously disposable dev-only state.
+- A blocker that isn't mine to resolve (e.g. "Docker Desktop isn't installed," "I need a real secret/credential from you").
+
 ## Architecture
 
 **Modular monolith, except Tender/Vendor (ADR-0006):** `decision`/`algorithm`/`platform` still live in
