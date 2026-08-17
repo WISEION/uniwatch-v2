@@ -34,6 +34,24 @@ class Settings:
     # something actually tries to reach the vendor service, not silently
     # point at a guessed URL (AGENTS.md hard ban #3).
     vendor_service_base_url: str = field(default_factory=lambda: os.environ.get("VENDOR_SERVICE_BASE_URL", ""))
+    # Browser origins allowed to call this API cross-origin (apps/web is
+    # always a different origin from apps/api_tender/apps/api_vendor in
+    # this topology -- even docker-compose.local.yml's nginx serves the
+    # built SPA as a pure static file server with no reverse proxy to the
+    # APIs, per apps/web/nginx.conf, so the browser calls api_tender/
+    # api_vendor's own origin directly in every environment, not just local
+    # dev). Explicit allowlist, never a wildcard -- the session cookie
+    # requires allow_credentials=True, which CORS itself forbids combining
+    # with "*" (deny-by-default, same posture as trusted_proxy_cidrs
+    # above). Dev default covers this project's two known local origins:
+    # the Vite dev server (5173) and the compose-built static app (8080).
+    cors_allowed_origins: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            o.strip()
+            for o in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:8080").split(",")
+            if o.strip()
+        )
+    )
 
     @property
     def asyncpg_dsn(self) -> str:
