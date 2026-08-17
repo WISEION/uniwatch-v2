@@ -1,17 +1,21 @@
 """Aggregates every observability signal this repo can honestly compute
 today (Phase 6, task 6.C, master plan §23.1) into one JSON payload -- the
-read side dashboards/alerts consume. Three of §23.1's named signal
-categories have no real data source anywhere in this codebase and are
-reported as such (`"status": "not_applicable"`, hard ban #3: no silent
-fallback) rather than fabricated or silently dropped: notification_delivery
-(no notifications table is created by any real migration --
-packages/platform/invariant_checks.py's own no_orphaned_notifications found
-the same gap), model_drift_confidence_abstention (no ML/model code exists
-anywhere in this repo -- only rule/human policy-graph nodes; ml/hybrid node
-types are schema-valid but rejected at construction), and
-reconciliation_mismatches (packages/tender/shadow_comparison.py's classify
-functions are pure and unpersisted -- no run-history table exists, per task
-6.A's own record)."""
+read side dashboards/alerts consume. Five categories have no real data
+source (or a deliberately unbuilt classification) anywhere in this codebase
+and are reported as such (`"status": "not_applicable"`, hard ban #3: no
+silent fallback) rather than fabricated or silently dropped:
+notification_delivery (no notifications table is created by any real
+migration -- packages/platform/invariant_checks.py's own
+no_orphaned_notifications found the same gap), model_drift_confidence_abstention
+(no ML/model code exists anywhere in this repo -- only rule/human
+policy-graph nodes; ml/hybrid node types are schema-valid but rejected at
+construction), reconciliation_mismatches (packages/tender/shadow_comparison.py's
+classify functions are pure and unpersisted -- no run-history table exists,
+per task 6.A's own record), request_latency_by_route (no request-latency
+middleware exists in apps/api_tender/apps/api_vendor, see
+docs/operations/slo.md), and decision_override_agreement (deliberately not
+built -- see docs/decisions/OPEN-QUESTIONS.md's 2026-08-17 entry,
+assumption #5)."""
 
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ import asyncio
 import json
 import sys
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -46,17 +51,33 @@ _NOT_APPLICABLE: dict[str, str] = {
     "reconciliation_mismatches": (
         "packages/tender/shadow_comparison.py classifications are pure and unpersisted; no run-history table exists"
     ),
+    "request_latency_by_route": (
+        "no request-latency middleware exists in apps/api_tender/apps/api_vendor -- "
+        "see docs/operations/slo.md's Interactive p95 latency row"
+    ),
+    "decision_override_agreement": (
+        "decision-cycle-time signal (packages/decision/decision_store.py::list_decision_cycle_seconds) "
+        "deliberately does not attempt override/agreement classification -- see "
+        "docs/decisions/OPEN-QUESTIONS.md's 2026-08-17 entry, assumption #5"
+    ),
 }
 
 
 def _jsonable(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
     if isinstance(value, dict):
         return {key: _jsonable(v) for key, v in value.items()}
     if isinstance(value, list):
         return [_jsonable(v) for v in value]
-    return value
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    # Hard ban #3 (no silent fallback): an unrecognized type must fail loudly
+    # here, not survive into json.dumps() and raise a mysterious TypeError
+    # three layers away.
+    raise TypeError(f"cannot make {type(value)} JSON-safe")
 
 
 async def collect_signals(database_url: str, backup_dir: Path) -> dict[str, Any]:
