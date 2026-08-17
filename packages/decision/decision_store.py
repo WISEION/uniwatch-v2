@@ -206,6 +206,39 @@ async def list_tenders_with_active_bid_decision(conn: AsyncConnection) -> list[i
     return [row["tender_id"] for row in rows if row["decision_type"] in ("bid", "conditional_bid")]
 
 
+async def list_decision_cycle_seconds(conn: AsyncConnection) -> list[dict[str, Any]]:
+    """Decision cycle-time signal (master plan §23.1): time from a Bid/
+    No-Bid candidate's derived score (bid_readiness_candidates.computed_at,
+    ADR-0003 layer 3) to the human decision that acted on it
+    (decisions.decided_at, layer 4). Only decisions carrying a
+    bid_readiness_candidate_id are included -- a go/no_go decision
+    (go_no_go_inputs_id instead) has no candidate to time against, and is
+    excluded rather than counted as a zero-length or missing cycle (hard
+    ban #3). Override detection (did the human decision agree with the
+    derived candidate) is deliberately NOT built here -- see
+    docs/decisions/OPEN-QUESTIONS.md's 2026-08-17 entry for why, same
+    precedent as task 5.C's list_case_traces()."""
+    rows = (
+        (
+            await conn.execute(
+                text(
+                    """
+                    SELECT d.id AS decision_id, d.tender_id, d.decision_type, d.decided_at,
+                           c.computed_at, EXTRACT(EPOCH FROM (d.decided_at - c.computed_at)) AS cycle_seconds
+                    FROM decisions d
+                    JOIN bid_readiness_candidates c ON c.id = d.bid_readiness_candidate_id
+                    WHERE d.bid_readiness_candidate_id IS NOT NULL
+                    ORDER BY d.decided_at
+                    """
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
 async def get_latest_decision_type(conn: AsyncConnection, *, tender_id: int) -> str | None:
     """The single tender-scoped counterpart of
     list_tenders_with_active_bid_decision, for callers (task 4.C's
