@@ -260,3 +260,15 @@ class JobStore:
     async def get(self, conn: AsyncConnection, job_id: int) -> Job | None:
         row = (await conn.execute(text(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE id = :id"), {"id": job_id})).mappings().first()
         return _row_to_job(row) if row is not None else None
+
+    async def count_by_status(self, conn: AsyncConnection) -> dict[str, int]:
+        rows = (await conn.execute(text("SELECT status, count(*) AS n FROM jobs GROUP BY status"))).all()
+        return {row.status: row.n for row in rows}
+
+    async def list_dead_lettered(self, conn: AsyncConnection) -> list[Job]:
+        rows = (
+            (await conn.execute(text(f"SELECT {_JOB_COLUMNS} FROM jobs WHERE status = 'failed' ORDER BY updated_at DESC")))
+            .mappings()
+            .all()
+        )
+        return [_row_to_job(row) for row in rows]

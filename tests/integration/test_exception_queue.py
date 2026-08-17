@@ -11,6 +11,7 @@ from packages.platform.exception_queue import (
     close_exception,
     close_matching_needs_human,
     enqueue_exception,
+    last_seen_by_source,
     list_open,
     schedule_retry,
 )
@@ -139,3 +140,37 @@ async def test_needs_human_is_not_retried_automatically(engine):
             {"id": record.id},
         )
     assert result.rowcount == 0  # the retryable-only guard clause matches nothing for a needs_human row
+
+
+async def test_last_seen_by_source_reflects_the_most_recent_event(engine):
+    async with engine.begin() as conn:
+        await enqueue_exception(
+            conn,
+            source="etender",
+            exception_type="schema_drift",
+            category="needs_human",
+            reason="field removed",
+            correlation_id="corr-signal-3",
+        )
+
+    async with engine.connect() as conn:
+        seen = await last_seen_by_source(conn)
+
+    assert "etender" in seen
+
+
+async def test_last_seen_by_source_filters_by_exception_type(engine):
+    async with engine.begin() as conn:
+        await enqueue_exception(
+            conn,
+            source="worldbank_projects_api",
+            exception_type="egress_rejected",
+            category="retryable",
+            reason="blocked host",
+            correlation_id="corr-signal-4",
+        )
+
+    async with engine.connect() as conn:
+        drift_only = await last_seen_by_source(conn, exception_type="schema_drift")
+
+    assert "worldbank_projects_api" not in drift_only

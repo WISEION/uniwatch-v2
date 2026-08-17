@@ -198,3 +198,51 @@ async def test_complete_marks_job_done_and_not_reclaimable(engine):
         assert done.status == "completed"
         again = await store.claim(conn, worker_id="w2", lease_seconds=30)
     assert again is None
+
+
+async def test_count_by_status_reflects_real_rows(engine):
+    store = JobStore()
+    identity = JobIdentity(
+        job_type="test_signal_job",
+        params={},
+        source="test",
+        range_start=None,
+        range_end=None,
+        contract_version="v1",
+        correlation_id="corr-signal-1",
+    )
+    async with engine.begin() as conn:
+        await store.enqueue(conn, identity)
+
+    async with engine.connect() as conn:
+        counts = await store.count_by_status(conn)
+
+    assert counts.get("pending", 0) >= 1
+
+
+async def test_list_dead_lettered_returns_only_terminally_failed_jobs(engine):
+    store = JobStore()
+    identity = JobIdentity(
+        job_type="test_dead_letter_job",
+        params={},
+        source="test",
+        range_start=None,
+        range_end=None,
+        contract_version="v1",
+        correlation_id="corr-signal-2",
+    )
+    async with engine.begin() as conn:
+        job_id = await store.enqueue(conn, identity)
+        claimed = await store.claim(conn, "worker-1", lease_seconds=60)
+        assert claimed is not None and claimed.id == job_id
+        for _ in range(claimed.max_attempts):
+            status = await store.fail_retry(conn, job_id, "worker-1", "boom", backoff_seconds=0)
+            if status == "failed":
+                break
+            await store.claim(conn, "worker-1", lease_seconds=60)
+
+    async with engine.connect() as conn:
+        dead = await store.list_dead_lettered(conn)
+
+    assert any(job.id == job_id for job in dead)
+    assert all(job.status == "failed" for job in dead)
