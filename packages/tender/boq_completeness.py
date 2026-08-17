@@ -147,6 +147,15 @@ async def record_page_fetched(
     return _row_to_status(row)
 
 
+async def count_by_status(conn: AsyncConnection) -> dict[str, int]:
+    """BOQ completeness signal (master plan §23.1): count of boq_import rows
+    per status -- 'complete' / 'incomplete' / 'in_progress' /
+    'source_exhausted_unverified' (INV-04's own status set, see hard ban
+    #5 -- never invented, never collapsed into a binary complete/not)."""
+    rows = (await conn.execute(text("SELECT status, count(*) AS n FROM boq_import GROUP BY status"))).all()
+    return {row.status: row.n for row in rows}
+
+
 async def mark_import_stalled(conn: AsyncConnection, *, source: str, event_id: int) -> BoqImportStatus:
     """Called when the fetching job stops trying (terminal failure or
     cancel) before completeness was proven. If a total was known, the

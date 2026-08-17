@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -94,3 +95,14 @@ async def get_raw_snapshot(conn: AsyncConnection, snapshot_id: int) -> RawSnapsh
         contract_version=row["contract_version"],
         correlation_id=row["correlation_id"],
     )
+
+
+async def last_fetched_at_by_source(conn: AsyncConnection) -> dict[str, datetime]:
+    """Source freshness signal (master plan §23.1): the most recent
+    fetched_at per source, across every raw_snapshots row ever captured --
+    the only durable record of "when did this source last respond
+    successfully". A failed fetch never reaches save_raw_snapshot, so a
+    source's absence from this dict is itself meaningful: it has never
+    succeeded (hard ban #3 -- surfaced, not hidden)."""
+    rows = (await conn.execute(text("SELECT source, max(fetched_at) AS last_fetched FROM raw_snapshots GROUP BY source"))).all()
+    return {row.source: row.last_fetched for row in rows}

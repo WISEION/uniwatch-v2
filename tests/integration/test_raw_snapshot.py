@@ -3,7 +3,12 @@ always a new row."""
 
 from __future__ import annotations
 
-from packages.tender.raw_snapshot import checksum_of, get_raw_snapshot, save_raw_snapshot
+from packages.tender.raw_snapshot import (
+    checksum_of,
+    get_raw_snapshot,
+    last_fetched_at_by_source,
+    save_raw_snapshot,
+)
 
 
 async def test_save_raw_snapshot_stores_checksummed_body(engine):
@@ -56,3 +61,21 @@ async def test_refetch_creates_a_new_row_not_an_update(engine):
     async with engine.begin() as conn:
         first_still_intact = await get_raw_snapshot(conn, id1)
     assert first_still_intact.checksum == checksum_of(body_v1)
+
+
+async def test_last_fetched_at_by_source_reflects_the_most_recent_snapshot(engine):
+    async with engine.begin() as conn:
+        await save_raw_snapshot(
+            conn,
+            source="etender",
+            resource_type="design_tender",
+            identity_key="signal-test-1",
+            raw_body=b'{"a": 1}',
+            contract_version="v1",
+            correlation_id="corr-signal-5",
+        )
+
+    async with engine.connect() as conn:
+        seen = await last_fetched_at_by_source(conn)
+
+    assert "etender" in seen

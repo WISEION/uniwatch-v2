@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from packages.tender.boq_completeness import (
+    count_by_status,
     get_or_create_boq_import,
     mark_import_stalled,
     record_page_fetched,
@@ -113,3 +114,13 @@ async def test_stalled_import_lists_exact_missing_pages_not_marked_complete(engi
     assert status.status == "incomplete"
     assert status.missing_pages == [2, 4, 5]
     assert status.status != "complete"
+
+
+async def test_count_by_status_reflects_real_rows(engine):
+    async with engine.begin() as conn:
+        await get_or_create_boq_import(conn, source="etender", event_id=999001)
+
+    async with engine.connect() as conn:
+        counts = await count_by_status(conn)
+
+    assert counts.get("in_progress", 0) >= 1
