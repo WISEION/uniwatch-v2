@@ -30,6 +30,12 @@ dev = [
   "testcontainers[postgres]==4.9.0",
   "ruff==0.16.1",
   "mypy==2.3.0",
+  # Phase 6 task 6.B Task 4 (NFR-SEC-07, threat-model T6): dependency/
+  # license/SBOM scanning wired into CI (.github/workflows/ci.yml's
+  # `security-scan` job) per .ci/README.md's Gate 3 stub plan.
+  "pip-audit==2.10.1",
+  "pip-licenses==5.5.5",
+  "cyclonedx-bom==7.3.1",
 ]
 
 [tool.setuptools.packages.find]

@@ -78,6 +78,12 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
+      # Phase 6 task 6.B's restore-drill test (tests/integration/test_restore_drill.py)
+      # shells out to the real pg_dump/pg_restore binaries -- ubuntu-latest's
+      # runner image already carries these, but pin the install explicitly
+      # rather than relying on an undocumented runner-image detail.
+      - name: install postgresql-client (pg_dump/pg_restore for the restore drill)
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
       # tests/integration spins up its own Postgres via testcontainers,
       # which talks to the runner's Docker daemon directly (available by
@@ -109,7 +115,18 @@ jobs:
     runs-on: ubuntu-latest
     needs: [fast, full]
     env:
-      IMAGE_TAG: ${{ github.sha }}
+      # NOT bare github.sha: on a pull_request-triggered run, github.sha is
+      # GitHub's own ephemeral test-merge commit (a preview of the PR merged
+      # into its base), which never persists in repo history once the PR
+      # closes -- it matches neither the PR's real head commit nor its
+      # eventual merge commit. A release-manifest.json built from that value
+      # can never be matched against anything real afterward, defeating the
+      # whole "commit<->digest proof" Gate 4 exists to check (found and
+      # fixed in task 6.B, verified against this repo's own PR #39: its
+      # manifest's recorded commit_sha matched neither `head.sha` nor
+      # `merge_commit_sha`). On push (e.g. after merge to master), github.sha
+      # is a real, permanent commit, so the fallback is exact and harmless.
+      IMAGE_TAG: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -165,6 +182,106 @@ jobs:
         with:
           name: release-manifest
           path: release-manifest.json
+
+  security-scan:
+    # Phase 6 task 6.B Task 4 (NFR-SEC-07, threat-model T6): the
+    # dependency-scan (SCA)/license-scan/SBOM row of .ci/README.md's Gate 3
+    # stub plan, wired for real. `needs: fast` only (not `full`) -- none of
+    # these three steps touch the DB, so there is no reason to wait on the
+    # testcontainers-backed Full gate.
+    name: Security scan (SCA + license + SBOM)
+    runs-on: ubuntu-latest
+    needs: fast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+
+      # Dependency vulnerability scan (SCA) against the resolved dependency
+      # set. Informational only for now, per .ci/README.md's own recorded
+      # rollout plan ("Full gate initially ... promoted to a Fast-gate
+      # blocker once the baseline is clean") -- this is the *first* run, so
+      # there is no established clean baseline yet (confirmed locally:
+      # pip-audit currently reports real findings against pip/pytest/
+      # starlette's pinned versions). `|| true` plus `continue-on-error`
+      # both guard against the step's exit code failing the job, matching
+      # the "not ready to be a hard gate yet" posture `live-fetch` already
+      # uses elsewhere in this file for a similar reason.
+      - name: dependency vulnerability scan (pip-audit) -- informational only, no clean baseline yet
+        continue-on-error: true
+        run: |
+          pip-audit --format json --output pip-audit-report.json || true
+          echo "--- pip-audit summary ---"
+          python -c "
+          import json
+          try:
+              report = json.load(open('pip-audit-report.json'))
+          except FileNotFoundError:
+              print('pip-audit produced no report file (unexpected) -- see step log above')
+          else:
+              deps = report.get('dependencies', []) if isinstance(report, dict) else report
+              total = 0
+              for dep in deps:
+                  vulns = dep.get('vulns') or []
+                  if vulns:
+                      total += len(vulns)
+                      ids = ', '.join(v['id'] for v in vulns)
+                      print(f\"  {dep['name']} {dep['version']}: {len(vulns)} known vuln(s) ({ids})\")
+              print(f'Total: {total} known vulnerability record(s). Informational only -- see .ci/README.md Gate 3 row; not yet a blocking gate.')
+          "
+
+      - name: Upload pip-audit report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+      # License scan: real pass/fail gate, no "clean baseline" ambiguity
+      # (unlike the vulnerability scan above). `--ignore-packages` excludes:
+      #   - uniwatch-v2 itself (this project's own code carries no PyPI
+      #     license classifier yet, so pip-licenses reports it as UNKNOWN --
+      #     that is not a third-party license to allow-list, so it is
+      #     excluded rather than added to the allow-list as a fake "UNKNOWN"
+      #     entry).
+      #   - chardet, which is LGPL-2.1 -- pulled in solely as a transitive
+      #     dependency of cyclonedx-bom itself (confirmed locally via
+      #     `pip show chardet`: "Required-by: cyclonedx-bom"), never
+      #     imported by any apps/packages code, and never installed in a
+      #     production image (apps/*/Dockerfile run `pip install .`, not
+      #     `.[dev]` -- the dev extra, and everything only reachable through
+      #     it, never ships). Excluding it here is a distribution-scope
+      #     judgment call, not a silent override: if chardet (or any other
+      #     LGPL package) ever becomes a direct or production dependency,
+      #     this exclusion must be revisited.
+      # Verified locally (2026-08-16) against this repo's actual resolved
+      # dev-dependency set: every other installed package's license falls
+      # into this allow-list; the check exits 0.
+      - name: license scan (pip-licenses, explicit allow-list)
+        run: |
+          pip-licenses \
+            --ignore-packages uniwatch-v2 chardet \
+            --allow-only "Apache Software License;Apache-2.0;Apache Software License; BSD License;Apache-2.0 OR BSD-2-Clause;BSD License;BSD-2-Clause;BSD-3-Clause;ISC License (ISCL);MIT;MIT License;MIT-0;MIT AND PSF-2.0;Mozilla Public License 2.0 (MPL 2.0);PSF-2.0;Python Software Foundation License"
+
+      - name: Generate license report artifact
+        run: pip-licenses --format=markdown --output-file licenses-report.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: licenses-report.md
+
+      # SBOM (CycloneDX JSON) for this project's resolved environment --
+      # `cyclonedx-py` is the CLI installed by the `cyclonedx-bom` package.
+      - name: generate SBOM (CycloneDX JSON)
+        run: cyclonedx-py environment -o sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
 
   live-fetch:
     # Deliberately NOT a required status check (not in `needs` for anything,
