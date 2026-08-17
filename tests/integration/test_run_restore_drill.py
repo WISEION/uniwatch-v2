@@ -19,7 +19,7 @@ from sqlalchemy import text
 
 from packages.platform.restore_drill import latest_passing_drill
 from scripts.backup import BackupError
-from scripts.run_restore_drill import run_drill
+from scripts.run_restore_drill import _redact_dsn_credentials, run_drill
 
 
 def _dsn_with_dbname(dsn: str, dbname: str) -> str:
@@ -63,7 +63,10 @@ async def test_run_drill_records_a_passing_result_in_the_source_database(engine,
     async with engine.connect() as conn:
         latest = await latest_passing_drill(conn)
     assert latest is not None
-    assert latest["target_database"] == drill_target_dsn
+    # I1 (final whole-branch review): the DSN's user:password@ credentials
+    # must never be persisted -- only host[:port]/dbname survives.
+    assert latest["target_database"] == _redact_dsn_credentials(drill_target_dsn)
+    assert "@" not in latest["target_database"]
     assert latest["backup_filename"].startswith("backup_")
 
 
@@ -103,6 +106,7 @@ async def test_run_drill_records_a_failed_result_when_backup_fails(engine, _data
     assert latest is not None
     assert latest["passed"] is False
     assert latest["detail"] == backup_error_msg
-    assert latest["target_database"] == drill_target_dsn
+    assert latest["target_database"] == _redact_dsn_credentials(drill_target_dsn)
+    assert "@" not in latest["target_database"]
     # Placeholder filename when backup fails -- not a fake real filename
     assert latest["backup_filename"] == "(backup failed)"

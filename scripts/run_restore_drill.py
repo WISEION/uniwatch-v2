@@ -17,11 +17,25 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from packages.platform.db import connection_scope, get_engine
 from packages.platform.restore_drill import record_restore_drill
 from scripts.backup import BackupError, create_backup
 from scripts.restore import RestoreError, restore_backup
+
+
+def _redact_dsn_credentials(dsn: str) -> str:
+    """Strip the `user:password@` userinfo component from a DSN before it is
+    persisted into the append-only `restore_drill_runs` table (or re-emitted
+    downstream by `scripts/collect_signals.py`'s `restore_drill.latest_passing`
+    field) -- host[:port] is kept, credentials are not (I1, final
+    whole-branch review)."""
+    parts = urlsplit(dsn)
+    netloc = parts.hostname or ""
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
 async def run_drill(*, source_database_url: str, drill_database_url: str, backup_dir: Path) -> int:
@@ -52,7 +66,7 @@ async def run_drill(*, source_database_url: str, drill_database_url: str, backup
             await record_restore_drill(
                 conn,
                 backup_filename=backup_filename,
-                target_database=drill_database_url,
+                target_database=_redact_dsn_credentials(drill_database_url),
                 passed=passed,
                 detail=detail,
             )
