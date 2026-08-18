@@ -1482,3 +1482,40 @@ DB-зависимые тесты (restore drill, invariant checker, deployment-a
 **Дальше:** Задача 6.C закрыта в границах реализации. Следующие задачи по `PLAN-MISSION-6.md` §3 — 6.D (pilot ops, требует `D-PILOT`) или продолжение работы над exit-gate Phase 6.
 
 **Блокеры:** нет новых. `D-SLO`/`TBD-01`/`TBD-02` (числовые пороги SLO) и `D-PILOT` остаются открытыми, как и в предыдущих записях. Технология дашбордов не выбрана (сигналы отдаются как plain JSON). `_KNOWN_SOURCES` в `packages/tender/freshness_alerts.py` остаётся захардкоженным кортежем — новый коннектор должен быть добавлен туда вручную.
+
+## 2026-08-17 — PR #43: реальный баг CORS, найденный при первом локальном запуске полного стека
+
+**Контекст:** первый в этой сессии реальный локальный запуск всех четырёх сервисов (`uvicorn` x2 + worker + Vite dev server) через настоящий браузер — не только `curl`/health-check. Владелец сообщил "ничего не работает"; health-check'и при этом были зелёными.
+
+**Найдено и исправлено:** ни в одном месте кодовой базы не было CORS middleware — `apps/web` всегда работает с другого origin, чем `api_tender`/`api_vendor`, причём это не только локальная особенность: даже `docker-compose.local.yml`'s `apps/web/nginx.conf` — чистый статик-сервер без reverse-proxy к API, так что тот же cross-origin вызов происходит и в pilot-топологии, просто на других портах (8080 vs 8001/8002). Без CORS браузерный preflight (`OPTIONS /auth/login`) получал голый `405`, и реальный запрос браузер вообще не отправлял — весь `apps/web` был тихо сломан. Исправлено: `Settings.cors_allowed_origins` (явный allowlist, никогда `"*"` — сессионная cookie требует `allow_credentials=True`, что CORS запрещает совмещать с wildcard-origin) + `CORSMiddleware` в `packages/platform/app_factory.py`, добавлен последним, чтобы обернуть всё снаружи. 4 новых теста. Проверено вживую в реальном браузере: вход и RBAC-scoped UI отрендерились корректно после фикса.
+
+**Урок, зафиксированный в памяти сессии:** health-check зелёный ≠ работает в браузере — CORS/cookie/CSP-класс багов виден только в реальном браузерном контексте, curl никогда не триггерит preflight.
+
+**Дальше:** PR #43 смёржен (`WISEION`). Владелец попросил зафиксировать в `CLAUDE.md` явное разрешение работать non-stop через локальные баги и production-readiness работу без остановки на каждый шаг, с явной оговоркой, что hard ban #6 (distinct approver) это не отменяет — добавлено.
+
+**Блокеры:** нет новых.
+
+## 2026-08-17/18 — PR #44: D-PILOT решён, task 6.D (пилотные пользователи + permission matrix)
+
+**Контекст:** `D-PILOT` (`PLAN-MISSION-6.md` §5) — единственное решение, блокирующее task 6.D. Владелец ответил в чате: 12 пилотных пользователей, 4 роли — 6 `worker`, 2 `tender`, 2 `procurement`, 2 `technical_specialist` — затем попросил сразу выдать все роли, а не поэтапно через одного bootstrap-админа.
+
+**Сделано:** `scripts/seed_pilot_users.py` — маппинг каждой из 4 ролей на реальные, уже применяемые в `apps/api_tender/routers/*.py` permission'ы (найдены через grep, не угаданы), провижининг всех 12 аккаунтов со свежесгенерированными (никогда не захардкоженными) паролями через `secrets.token_urlsafe`, напечатанными ровно один раз. Идемпотентен для ролей/permissions, намеренно не идемпотентен для уже созданных пользователей — повторный запуск никогда не сбросит уже выданный реальный пароль. Проверено вживую по реальному HTTP против запущенного `api_tender`: `pilot_worker_1` получает `403` на `GET /admin/users`, `pilot_technical_specialist_1` — `200`.
+
+**Дальше:** PR #44 смёржен (`WISEION`). Task 6.D's первая строка закрыта; оставшиеся две (training/feedback queue, go-live pack) — следующая задача этой же сессии.
+
+**Блокеры:** нет новых.
+
+## 2026-08-18 — Task 6.D: feedback queue, onboarding doc, go-live decision pack template
+
+**Контекст:** продолжение task 6.D — оставшиеся два пункта из `PLAN-MISSION-6.md` §3: "training материалы и очередь обратной связи" и "go-live/rollback decision pack".
+
+**Сделано:**
+1. **Feedback queue** — миграция `0024_pilot_feedback.sql` (schema version 23→24), `packages/platform/pilot_feedback.py` (submit/list/resolve, append-only submission, только triage-статус меняется), новый роутер `apps/api_tender/routers/pilot_feedback.py`. Новые permissions: `platform.feedback.submit` (выдан всем 4 пилотным ролям), `platform.feedback.triage` (только `technical_specialist`) — добавлены в `scripts/seed_pilot_users.py` и подтверждены живым повторным запуском (все 12 уже существующих пользователей остались нетронуты, permission добавился). 7 интеграционных тестов.
+2. **Frontend** — `apps/web/src/api/feedbackClient.ts` + `FeedbackForm.tsx`, вшит в `App.tsx` для любого залогиненного пользователя. 4 vitest-теста. Проверено вживую в реальном Chrome: вход как `pilot_worker_1`, отправка фидбэка, реальный `POST /pilot-feedback → 201`, подтверждение "Thanks -- feedback #1 recorded." на экране — не только `curl`.
+3. **`docs/operations/pilot-onboarding.md`** — как войти, таблица возможностей по ролям, как отправить фидбэк. Честно зафиксирован пробел: triage-интерфейса в `apps/web` нет, только API.
+4. **`docs/operations/go-live-decision-pack.md`** — шаблон (по образцу `release-notes-template.md`'s "template only" дисциплины), не выдуманные данные: каждая секция указывает на реальный источник (restore_drill, shadow_comparison, pilot_feedback), включая честную оговорку, что у shadow_comparison нет таблицы истории запусков.
+5. **`docs/operations/README.md`** — был пустым Phase-0 стабом без единой ссылки (пробел, который final review задачи 6.C уже находил и не исправил, M8) — исправлено, добавлены ссылки на все реальные файлы `docs/operations/`.
+
+**Дальше:** Все три пункта task 6.D механически закрыты. Реально оставшееся — не код: нужен настоящий прогон пилота, чтобы `go-live-decision-pack.md` заполнить реальными данными. Task 6.E (security/qa, закрывает exit gate Phase 6) — следующая задача по `PLAN-MISSION-6.md` §3.
+
+**Блокеры:** нет новых. `D-SLO`/`TBD-01`/`TBD-02` остаются открытыми.
