@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { createAlgoritmClient } from "./api/algoritmClient";
 import { createAuthClient, type LoginResult } from "./api/authClient";
 import { downloadJson } from "./exportJson";
+import { FeedbackForm } from "./FeedbackForm";
 import { Login } from "./Login";
 import { PolicyOutline } from "./PolicyOutline";
 import { SimulationPanel } from "./SimulationPanel";
@@ -73,6 +74,8 @@ export function App() {
           Sign out
         </button>
       </p>
+
+      <FeedbackForm baseUrl={baseUrl} />
 
       <form onSubmit={handleOpenVersion} aria-label="Open policy version">
         <div>

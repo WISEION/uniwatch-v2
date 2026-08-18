@@ -51,6 +51,7 @@ PILOT_ROLES: dict[str, tuple[str, ...]] = {
         "decision.execution_facts.read",
         "decision.execution_facts.create",
         "tender.forecast_snapshot.read",
+        "platform.feedback.submit",
     ),
     "tender": (
         "decision.bid_readiness.read",
@@ -59,6 +60,7 @@ PILOT_ROLES: dict[str, tuple[str, ...]] = {
         "decision.go_no_go.create",
         "tender.forecast_snapshot.read",
         "tender.forecast_snapshot.write",
+        "platform.feedback.submit",
     ),
     "procurement": (
         "decision.execution_facts.read",
@@ -66,6 +68,7 @@ PILOT_ROLES: dict[str, tuple[str, ...]] = {
         "decision.execution_facts.close_project",
         "decision.outcome.read",
         "decision.outcome.write",
+        "platform.feedback.submit",
     ),
     "technical_specialist": (
         "algorithm.policy.read",
@@ -79,6 +82,8 @@ PILOT_ROLES: dict[str, tuple[str, ...]] = {
         "admin.users.update",
         "admin.users.disable",
         "admin.users.set_password",
+        "platform.feedback.submit",
+        "platform.feedback.triage",
     ),
 }
 
